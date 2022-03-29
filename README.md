@@ -1,7 +1,8 @@
 # Med Phys Scripts
 Code from my work as radiation Physicist Assistant at Cookeville Regional Medical Center
 
-**Note:** See the [RayStation Scripts User Manual](./RayStation/RayStation Scripts User Manual.md) and [Other Scripts User Manual](./Other Scripts User Manual.md) for end-user instructions for running each script. This document is for technical details.
+<!-- For some reason, []() links don't work here. Spaces?? -->
+**Note:** See the <a href="./RayStation/RayStation Scripts User Manual.md">RayStation Scripts User Manual</a> and <a href="./Other Scripts User Manual.md">Other Scripts User Manual</a> for end-user instructions for running each script. This document is for technical details.
 ## How to Implement a Script in RayStation
 See RaySearch's official Scripting Guideline for comprehensive coverage of how to implement a script in RayStation, but following is my clinic's system:
 
@@ -10,7 +11,8 @@ RayStation scripts are stored in `T:\Physics\KW\med-phys-scripts\RayStation`. Ea
 We always use our custom RayStation scripting environment `CPython 3.8`.
 ### Example
 Here is how we set up `add_box_to_external` in RayStation:
-1. Write `add_box_to_external.py` and save in the `RayStation` folder.
+1. Write `add_box_to_external.py` and save it in the `RayStation` folder.
+
     ```python
                 ⋮
     def add_box_to_external():
@@ -19,6 +21,7 @@ Here is how we set up `add_box_to_external` in RayStation:
         add_box_to_external()
     ```
 2. Write `_add_box_to_external.py` and save it in the `Blurbs` folder.
+
     ```python
     from connect import run
 
