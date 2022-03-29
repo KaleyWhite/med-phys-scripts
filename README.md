@@ -11,17 +11,17 @@ We always use our custom RayStation scripting environment `CPython 3.8`.
 ### Example
 Here is how we set up `add_box_to_external` in RayStation:
 1. Write `add_box_to_external.py` and save in the `RayStation` folder.
-```python
-⋮
-def add_box_to_external():
-⋮
-if __name__ == '__main__':
-    add_box_to_external()
-```
+    ```python
+                ⋮
+    def add_box_to_external():
+                ⋮
+    if __name__ == '__main__':
+        add_box_to_external()
+    ```
 2. Write `_add_box_to_external.py` and save it in the `Blurbs` folder.
-```python
-from connect import run
+    ```python
+    from connect import run
 
-run(r'T:\Physics\KW\Scripts\RayStation\add_box_to_external')
-```
+    run(r'T:\Physics\KW\Scripts\RayStation\add_box_to_external')
+    ```
 3. Import the blurb into RayStation and name the script `add_box_to_external`.
