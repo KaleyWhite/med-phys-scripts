@@ -1,10 +1,11 @@
+import clr
 import re
 import sys
 
 from connect import *
 
 clr.AddReference('System.Windows.Forms')
-from System.Windows.Forms import MessageBox  # FOr displaying errors
+from System.Windows.Forms import MessageBox  # For displaying errors
 
 
 def copy_plan_without_changes():
@@ -17,6 +18,8 @@ def copy_plan_without_changes():
     The beam and setup beam names are the same as their numbers. If the old (setup) beam is different from its number, the old name is appended to the new (setup) beam's description.
 
     Does not switch to the new plan because this would require saving the patient.
+
+    Returns: The new plan.
     """
 
     # Ensure a patient is open
@@ -41,8 +44,14 @@ def copy_plan_without_changes():
         sys.exit()
 
     # Copy plan
-    new_plan_name = plan.Name + ' (1)'
-    case.CopyPlan(PlanName=plan.Name, NewPlanName=new_plan_name)
+    copy_num = 1
+    while True:
+        try:
+            new_plan_name = f'{plan.Name} ({copy_num})'
+            case.CopyPlan(PlanName=plan.Name, NewPlanName=new_plan_name)
+            break
+        except:
+            copy_num += 1
     new_plan = case.TreatmentPlans[new_plan_name]
     
     # Get unique beam number
@@ -86,6 +95,4 @@ def copy_plan_without_changes():
             sb.Isocenter.EditIsocenter(Name=old_sb.Isocenter.Annotation.Name)
             beam_num += 1
 
-
-if __name__ == '__main__':
-    copy_plan_without_changes()
+    return new_plan

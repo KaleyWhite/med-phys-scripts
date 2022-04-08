@@ -127,7 +127,3 @@ def add_box_to_external():
     for plan in case.TreatmentPlans:
         if (plan.Review is None or plan.Review.ApprovalStatus != 'Approved') and plan.GetTotalDoseStructureSet().OnExamination.Equals(exam):
             plan.TreatmentCourse.TotalDose.UpdateDoseGridStructures()
-
-
-if __name__ == '__main__':
-    add_box_to_external()
