@@ -128,6 +128,16 @@ def add_clinical_goals():
     
     # Get current variables
     try:
+        patient = get_current('Patient')
+    except:
+        MessageBox.Show('There is no patient open. Click OK to abort the script.', 'No Open Patient')
+        sys.exit()
+    try:
+        case = get_current('Case')
+    except:
+        MessageBox.Show('There is no case open. Click OK to abort the script.', 'No Open Case')
+        sys.exit()
+    try:
         plan = get_current('Plan')
     except:
         MessageBox.Show('There is no plan open. Click OK to abort the script.', 'No Open Plan')
@@ -137,8 +147,6 @@ def add_clinical_goals():
     except:
         MessageBox.Show('The current plan has no beam sets. Click OK to abort the script.', 'No Beam Sets')
         sys.exit()
-    patient = get_current('Patient')
-    case = get_current('Case')
 
     if plan.Review is not None and plan.Review.ApprovalStatus == 'Approved':
         res = MessageBox.Show('Plan is approved, so clinical goals cannot be added. Would you like to add goals to a copy of the plan?', 'Plan Is Approved', MessageBoxButtons.YesNo)
@@ -367,18 +375,18 @@ def add_clinical_goals():
             ## Parse dose and volume amounts from goal. Then add clinical goal for volume or dose.
 
             # Regexes to match goal
-            dose_amt_regex = '''(
+            dose_amt_regex = """(
                                     (?P<dose_pct_rx>[\d.]+%)?
                                     (?P<dose_rx>Rx[pn]?)|
                                     (?P<dose_amt>[\d.]+)
                                     (?P<dose_unit>c?Gy)
-                                )'''  # e.g., 95%Rx or 20Gy
+                                )"""  # e.g., 95%Rx or 20Gy
             dose_types_regex = '(?P<dose_type>max|min|mean|median)'
-            vol_amt_regex = '''(
+            vol_amt_regex = """(
                                     (?P<vol_amt>[\d.]+)
                                     (?P<vol_unit>%|cc)|
                                     (\(v-(?P<spare_amt>[\d.]+)\)cc)
-                            )'''  # e.g., 67%, 0.03cc, or v-700cc
+                            )"""  # e.g., 67%, 0.03cc, or v-700cc
             sign_regex = '(?P<sign><|>)'  # > or <
             dose_regex = 'D(' + dose_types_regex + '|' + vol_amt_regex + ')' + sign_regex + dose_amt_regex  # e.g., D0.03cc<110%Rx, Dmedian<20Gy
             vol_regex = 'V' + dose_amt_regex + sign_regex + vol_amt_regex  # e.g., V20Gy<67%

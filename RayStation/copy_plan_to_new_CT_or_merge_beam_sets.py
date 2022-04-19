@@ -297,15 +297,17 @@ def copy_plan_to_new_ct_or_merge_beam_sets() -> None:
     The new exam must have an external geometry.
     """
 
-    # Check if a patient is loaded
+    # Get current variables
     try:
         patient = get_current('Patient')
     except:
-        MessageBox.Show('No patient is open. Click Ok to abort the script.', 'No Patient Open')
+        MessageBox.Show('No patient is open. Click OK to abort the script.', 'No Open Patient')
         sys.exit()
-
-    # Check the version of RayStation
-    case = get_current('Case')
+    try:
+        case = get_current('Case')
+    except:
+        MessageBox.Show('No case is open. Click OK to abort the script.', 'No Open Case')
+        sys.exit()
 
     dialog = MyWindow(case)
     dialog.ShowDialog()
@@ -314,6 +316,8 @@ def copy_plan_to_new_ct_or_merge_beam_sets() -> None:
         sys.exit()
 
     reg = None
+
+    unsupported_modality = []  # Names of beam sets that are neither electrons nor photons
 
     # Are we copying or merging?
     if dialog.mode == 'copy':
@@ -339,7 +343,7 @@ def copy_plan_to_new_ct_or_merge_beam_sets() -> None:
         examination = [e for e in case.Examinations if e.Name == replan_ct_name]
         if original_plan.TreatmentCourse.TotalDose.DoseValues is None:
             MessageBox.Show('The plan "' + original_plan.Name + '" has no dose. Click OK to abort the script.', 'No Dose')
-            sys.exit(1)
+            sys.exit()
         original_plan_ct_name = \
             original_plan.GetTotalDoseStructureSet().OnExamination.Name
             
@@ -368,6 +372,9 @@ def copy_plan_to_new_ct_or_merge_beam_sets() -> None:
 
     # Copy beam sets
     for bs in beam_sets:
+        if bs.Modality not in ['Electrons', 'Photons']:
+            unsupported_modality.append(bs.Name)
+
         name = bs.DicomPlanLabel
         machine_name = bs.MachineReference.MachineName
         modality = bs.Modality
@@ -534,10 +541,12 @@ def copy_plan_to_new_ct_or_merge_beam_sets() -> None:
     # Compute the new beams
     e_beam_sets = []
     for bs in replan.BeamSets:
-
         if bs.Modality == 'Electrons':
             e_beam_sets.append(bs.DicomPlanLabel)
         elif bs.Beams.Count != 0:
             bs.ComputeDose(ComputeBeamDoses=True, DoseAlgorithm=bs.AccurateDoseAlgorithm.DoseAlgorithm, ForceRecompute=True)
     if e_beam_sets:
         MessageBox.Show('The following are electron beam sets, so histories and Rx must be set before computing: ' + ', '.join(e_beam_sets), 'Cannot Compute e- Beam Sets')
+
+    if unsupported_modality:
+        MessageBox.Show('This script can only copy/merge electron or photon beam sets, so the following beam set(s) could not be copied/merged: ' + ', '.join(unsupported_modality) + '.', 'Unsupported Modality(ies)')

@@ -2,12 +2,22 @@ import clr
 import random
 
 from connect import *
+import pandas as pd
 
 clr.AddReference('System.Windows.Forms')
 from System.Windows.Forms import MessageBox  # To display warnings and errors
 
+
+COLORS_PATH = r'T:\Physics\KW\med-phys-spreadsheets\TG-263 Nomenclature with CRMC Colors.xlsm'
 LUNG_EXPANSION_FOR_CHESTWALL = 3
 
+
+def read_colors():
+    colors = pd.read_excel(COLORS_PATH, sheet_name='Names & Colors', usecols=['TG-263 Primary Name', 'Color'])
+    colors.set_index('TG-263 Primary Name', drop=True, inplace=True)
+    colors = colors['Color'].str[1:-1]  # Remove parens
+    return colors
+    
 
 def contour_chestwall():
     """Creates Chestwall_L and Chestwall_R geometries on the current examination
@@ -21,23 +31,25 @@ def contour_chestwall():
     """
     try:
         case = get_current('Case')
-        try:
-            exam = get_current('Examination')
-        except:
-            MessageBox.Show('The current case has no exams. Click OK to abort the script.', 'No Exams')
-            sys.exit()
     except:
         MessageBox.Show('There is no case open. Click OK to abort the script.', 'No Open Case')
+        sys.exit()
+    try:
+        exam = get_current('Examination')
+    except:
+        MessageBox.Show('The current case has no exams. Click OK to abort the script.', 'No Exams')
         sys.exit()
 
     struct_set = case.PatientModel.StructureSets[exam.Name]
 
-    # Get external geometry
+    # Get external ROI
     try:
         ext_name = next(roi.Name for roi in case.PatientModel.RegionsOfInterest if roi.Type == 'External')
     except StopIteration:
         MessageBox.Show('There is no external ROI in the current case. Click OK to abort the script.', 'No External ROI')
         sys.exit()
+
+    colors = read_colors()
 
     approved_roi_names = [geom.OfRoi.Name for ss in struct_set.ApprovedStructureSets for geom in ss.ApprovedRoiStructures]
 
@@ -56,15 +68,17 @@ def contour_chestwall():
 
         # Chestwall name and color
         chestwall_name = 'Chestwall_' + side  # 'Chestwall_L' or 'Chestwall_R'
-        
+        color = colors[chestwall_name]
+
         # Create/get chestwall ROI
         if chestwall_name in approved_roi_names:
             approved_chestwall_names.append(chestwall_name)
             continue
         try:
             chestwall = struct_set.RoiGeometries[chestwall_name].OfRoi
+            chestwall.Color = color
         except:
-            chestwall = case.PatientModel.CreateRoi(Name=chestwall_name, Type='Organ')
+            chestwall = case.PatientModel.CreateRoi(Name=chestwall_name, Type='Organ', Color=color)
 
         # Create chestwall geometry based on lung
         margin_a = {'Type': 'Expand', 'Superior': 0, 'Inferior': 0, 'Anterior': LUNG_EXPANSION_FOR_CHESTWALL, 'Posterior': LUNG_EXPANSION_FOR_CHESTWALL}  # Expand lung posteriorly, anteriorly, and in the `side` direction
@@ -85,7 +99,8 @@ def contour_chestwall():
         struct_set.SimplifyContours(RoiNames=added_chestwall_geom_names, RemoveHoles3D=True, RemoveSmallContours=True, AreaThreshold=0.01, ResolveOverlappingContours=True)
         # For some reason, the above does not remove chestwall overlap, so subtract one chestwall from the other
         if len(added_chestwall_geom_names) == 2:
-            minuend, subtrahend = random.shuffle(added_chestwall_geom_names)
+            random.shuffle(added_chestwall_geom_names)
+            minuend, subtrahend = added_chestwall_geom_names
             case.PatientModel.RegionsOfInterest[minuend].CreateAlgebraGeometry(Examination=exam, Algorithm='Auto', ExpressionA={'Operation': 'Union', 'SourceRoiNames': [minuend], 'MarginSettings': {'Type': 'Expand', 'Superior': 0, 'Inferior': 0, 'Anterior': 0, 'Posterior': 0, 'Right': 0, 'Left': 0 }}, ExpressionB={'Operation': 'Union', 'SourceRoiNames': [subtrahend], 'MarginSettings': {'Type': 'Expand', 'Superior': 0, 'Inferior': 0, 'Anterior': 0, 'Posterior': 0, 'Right': 0, 'Left': 0 }}, ResultOperation='Subtraction', ResultMarginSettings={'Type': 'Expand', 'Superior': 0, 'Inferior': 0, 'Anterior': 0, 'Posterior': 0, 'Right': 0, 'Left': 0})
     
     warnings = ''

@@ -1,6 +1,6 @@
 import clr
 import sys
-
+import random
 from connect import *
 
 clr.AddReference('System.Windows.Forms')
@@ -23,18 +23,18 @@ def convert_virtual_jaw_to_mlc():
     """
     try:
         patient = get_current('Patient')
-        try:
-            case = get_current('Case')
-            try:
-                plan = get_current('Plan')
-            except:
-                MessageBox.Show('There are no plans in the current case. Click OK to abort the script.', 'No Plans')
-                sys.exit()
-        except:
-            MessageBox.Show('There is no case open. Click OK to abort the script.', 'No Open Case')
-            sys.exit()
     except:
         MessageBox.Show('There is no patient open. Click OK to abort the script.', 'No Open Patient')
+        sys.exit()
+    try:
+        case = get_current('Case')
+    except:
+        MessageBox.Show('There is no case open. Click OK to abort the script.', 'No Open Case')
+        sys.exit()
+    try:
+        plan = get_current('Plan')
+    except:
+        MessageBox.Show('There is no plan open. Click OK to abort the script.', 'No Open Plan')
         sys.exit()
 
     clinical_machine = 'SBRT 6MV' if any(is_4d_exam(exam) for exam in case.Examinations) else 'ELEKTA'
@@ -47,6 +47,12 @@ def convert_virtual_jaw_to_mlc():
 
     i = 0
     sim_beam_sets = [beam_set for beam_set in plan.BeamSets if beam_set.MachineReference.MachineName not in ('SBRT 6MV', 'ELEKTA')]  # If machine is correct, beam set is not a sim beam set
+
+    # Exit script if any sim beam sets are not photons
+    if any(sim_beam_set.Modality != 'Photons' for sim_beam_set in sim_beam_sets):
+        MessageBox.Show('Every beam set must be photons. Click OK to abort the script.', 'Incorrect Modality')
+        sys.exit()
+
     while i < len(sim_beam_sets):
         sim_beam_set = sim_beam_sets[i]
 
@@ -58,8 +64,9 @@ def convert_virtual_jaw_to_mlc():
 
         # Iterate over each beam in the simulation beamset 
         for beam in sim_beam_set.Beams:
-            iso_data = beam_set.CreateDefaultIsocenterData(Position=beam.Isocenter.Position)
-            iso_data['Name'] = iso_data['NameOfIsocenterToRef'] = beam.Isocenter.Annotation.Name
+            iso_name = beam.Isocenter.Annotation.Name
+            iso_data = sim_beam_set.GetIsocenterData(Name=iso_name)
+            iso_data['Name'] = iso_data['NameOfIsocenterToRef'] = iso_name + ' 1'
             
             qual_id = beam.BeamQualityId if beam.BeamQualityId != '' else '6'
 
@@ -74,7 +81,7 @@ def convert_virtual_jaw_to_mlc():
             y_ctr = (y1 + y2) / 2
             new_beam.CreateRectangularField(Width=x_width, Height=y_width, CenterCoordinate={'x': x_ctr, 'y': y_ctr}, MoveMLC=True, MoveAllMLCLeaves=False, MoveJaw=True, JawMargins={'x': 0, 'y': 0}, DeleteWedge=False, PreventExtraLeafPairFromOpening=False)
 
-        # Change setup beam names to match descriptions, as in v8B
+        # Change setup beam names to match descriptions, as in v8B script
         for setup_beam in sim_beam_set.PatientSetup.SetupBeams:
             setup_beam.Name = setup_beam.Description
 
