@@ -2,8 +2,11 @@ import clr
 import random
 import re
 import sys
+from typing import List, Optional
 
 from connect import *
+from connect.connect_cpython import PyScriptObject  # For type hints
+
 import pandas as pd
 
 clr.AddReference('System.Drawing')
@@ -15,133 +18,169 @@ from System.Windows.Forms import *
 TG263_PATH = r'T:\Physics\KW\med-phys-spreadsheets\TG-263 Nomenclature with CRMC Colors.xlsm'
 
 class CreateDerived(object):
+    """Class that creates derived ROIs based on their TG-263 compliant names from a spreadsheet"""
+    
+    # Regular expression that matches an ROI name
+    # An ROI name matches a given TG-263 name if it is an exact match:
+    # -  As is
+    # -  With the _L or _R categorization, and/or
+    # -  With miscellaneous info. Per TG-263, this is a suffix after a carat (^)
+    # -  With a copy number in parentheses
+    # Example: The TG-263 name "Lung" matches "Ling", "Lung_L", "Lung_R", "Lung^DJ", "Lung_L^DJ", "Lung (1)", "Lung^DJ (1)", etc.
     ROI_NAME_REGEX = r'^({})(_[LR])?(\^.+)?( \(\d+\))?$'
 
-    def __init__(self, case):
+    TARGET_TYPES = ['CTV', 'GTV', 'PTV']  # ROI types that are targets
+
+    def __init__(self, case: PyScriptObject) -> None:
+        """Initializes a CreateDerived object for the given case
+
+        Arguments
+        ---------
+        case: The case in which to create the derived ROIs
+        """
         self._case = case
-        self._tg263 = self._read_tg263()
-        self._to_update = []
+        self._tg263: pd.DataFrame = self._read_tg263()
+        self._to_update: List[str] = []  # List of names of derived ROIs that will be updated after they are created
 
-    def _populate_target_names(self):
-        target_names = {}
-        for target_type in ('CTV', 'GTV', 'PTV'):
-            target_names[target_type] = [roi.Name for roi in self._case.PatientModel.RegionsOfInterest if roi.Type.upper() == target_type]
-        return target_names
+    def _read_tg263(self) -> pd.DataFrame:
+        """Reads in the TG-263 DataFrame from the spreadsheet
 
-    def _read_tg263(self):
+        Only columns "TG-263 Primary Name" and "Color" are used
+        Column "TG-263 Primary Name" is used as the DataFrame index
+        """
         tg263 = pd.read_excel(TG263_PATH, sheet_name='Names & Colors', usecols=['TG-263 Primary Name', 'Color'])
         tg263.rename(columns={'TG-263 Primary Name': 'Name'}, inplace=True)
         tg263.set_index('Name', drop=True, inplace=True)
         return tg263
 
-    def _matching_roi_names(self, name):
+    def _matching_roi_names(self, name: str) -> List[str]:
+        """Selects ROIs whose names match the TG-263 name
+
+        For targets, name is a target type, and all ROIs of that type match
+        For non-targets, see constant ROI_NAME_REGEX for details on which ROI names match
+
+        Arguments
+        ---------
+        name: The TG-263 name to find matching ROIs for
+
+        Returns
+        -------
+        List of matching ROI names
+        """
         rois = case.PatientModel.RegionsOfInterest
-        if name in ('CTV', 'GTV', 'PTV'):
+        if name in TARGET_TYPES:  # Target
             return [roi.Name for roi in rois if roi.Type.upper() == name]
-        
+        elif name == 'ITV':  # RayStation does not have ITV type, so use GTV
+            return [roi.Name for roi in rois if roi.Type.upper() == 'GTV']
+        elif name.endswith('s') and name[:-1] in self.TARGET_TYPES + ['ITV']:
+            targets_to_sum = self._matching_roi_names(name[:-1])
+            return self._union_or_intersection(derived_name)
+        else:
+            return [roi.Name for roi in rois if re.match(self.ROI_NAME_REGEX, roi.Name, re.IGNORECASE) is not None]
 
-    def _unique_roi_name(self, name):
-        all_names = [roi.Name for roi in case.PatientModel.RegionsOfInterest]
-        copy_num = 1
-        while name in all_names:
-            name = fr'{name} ({copy_num})'
-            copy_num += 1
-        return name
+    def _create_roi(self, name: str, type_: Optional[str] = 'Control') -> PyScriptObject:
+        """Creates an ROI with the given name (made unique) and the color from the spreadsheet
 
-    def _union_or_intersection(self, source_names, **kwargs):
-        union = kwargs.get('union', True)
-        derived_name = kwargs.get('derived_name')
-        derived_type = kwargs.get('derived_type', 'Control')
+        Arguments
+        ---------
+        name: Name of the ROI to create
+        type_: Type of the ROI to create
 
-        source_names.sort(key=lambda x: x.lower())
+        Returns
+        -------
+        The created ROI
+        """
+        color = self._tg263_info[name]
+        name = self._case.PatientModel.GetUniqueRoiName(name)
+        roi = self._case.PatientModel.CreateRoi(Name=name, Type=type_, Color=color)
+        return roi
 
-        if derived_name is None:
-            join_char = '_' if union else '&'
-            derived_name = join_char.join(source_names)
+    def _union_or_intersection(self, derived_name, union: Optional[bool] = True):
+        """Creates a union or intersection ROI
 
-        color = self._tg263_info[derived_name]
-        derived_name = self._unique_roi_name(derived_name)
-        derived = self._case.PatientModel.CreateRoi(Name=derived_name, Type=derived_type, Color=color)
-        derived.SetAlgebraExpression(ExpressionA={ 'Operation': 'Union' if union else 'Intersection', 'SourceRoiNames': source_names, 'MarginSettings': { 'Type': 'Expand', 'Superior': 0, 'Inferior': 0, 'Anterior': 0, 'Posterior': 0, 'Right': 0, 'Left': 0 } })
-        
-        self._to_update.append(derived_name)
-        
-    def subtraction(self, source_names, **kwargs):
-        # Helper function that sets an ROI algebra expression for organs minus the given target type
-        # `target_type`: 'CTV', 'GTV', or 'PTV'
-        # `organ_names`: List of names of ROIs from which to subtract the target
-        
-        # Create each derived ROI, including left and right sides
-        subtrahend_regex = ROI_NAME_REGEX.format(source_names[0])
-        subtrahends = [roi.Name for roi in self._case.PatientModel.RegionsOfInterest if re.match(subtrahend_regex, roi.Name, re.IGNORECASE) is not None]
-
-        for source_name in source_names
-        minuend_regex = ROI_NAME_REGEX.format(r'\(' + '|'.join(source_names[]))
-        minuends = [roi.Name for roi in self._case.PatientModel.RegionsOfInterest if re.match(subtrahend_regex, roi.Name, re.IGNORECASE) is not None]
-        for roi in case.PatientModel.RegionsOfInterest:
-            if not re.match(regex, roi.Name, re.IGNORECASE):
-                continue
-            for target_name in self.target_names[target_type]:
-                derived_name = roi.Name + '-' + target_name
-                color = self._tg263_info[derived_name]
-                derived_name = self._unique_roi_name(derived_name)
-                derived = self._case.PatientModel.CreateRoi(Name=derived_name, Type='Organ', Color=color)
-                derived.SetAlgebraExpression(ExpressionA={ 'Operation': 'Union', 'SourceRoiNames': [roi.Name], 'MarginSettings': { 'Type': 'Expand', 'Superior': 0, 'Inferior': 0, 'Anterior': 0, 'Posterior': 0, 'Right': 0, 'Left': 0 } }, ExpressionB={ 'Operation': 'Union', 'SourceRoiNames': [target_name], 'MarginSettings': { 'Type': 'Expand', 'Superior': 0, 'Inferior': 0, 'Anterior': 0, 'Posterior': 0, 'Right': 0, 'Left': 0 } }, ResultOperation='Subtraction', ResultMarginSettings={ 'Type': 'Expand', 'Superior': 0, 'Inferior': 0, 'Anterior': 0, 'Posterior': 0, 'Right': 0, 'Left': 0 })
-                
-                self._to_update.append(derived_name)
-
-    def union_or_intersection(self, source_names, **kwargs):
-        # Helper function that sets an ROI algebra expression for the union or intersection of the given ROIs
-        # `source_names`: List of names of ROIs to be unioned or intersected
-        # `union`: True if the source ROIs should be unioned, False if they should be intersected
-
-        new_source_names = np.array(self._target_names[source_name] for source_name in source_names if source_name in self._target_names).flatten()
+        Arguments
+        ---------
+        source_names: List of existing ROI names to union or intersect
+        union: True for a union, False for an intersection
+        """
+        # Get all matching source names
+        join_char = '|' if union else '&'
+        source_names = derived_name.split(join_char)
+        new_source_names = []
         for source_name in source_names:
-            if source_name in self._target_names:
-                new_source_names.append(self._target_names[source_name])
-            else:
-                regex = ROI_NAME_REGEX.format(source_name)
-                new_source_names.append([roi.Name for roi in self._case.PatientModel.RegionsOfInterest if re.match(regex, roi.Name, re.IGNORECASE) is not None])
+            all_source_names = self._matching_roi_names(source_name)
+            if all_source_names:
+                new_source_names.append(all_source_names)
+        if not new_source_names:
+            return
 
-        combos = list(set(itertools.product(new_source_names)))
+        # Create union/intersection of all combinations of source names
+        combos = itertools.product(new_source_names)
         for combo in combos:
-            self._union_or_intersection(combo, **kwargs)
+            # Create derived ROI
+            derived = self._create_roi(derived_name)
+            derived.SetAlgebraExpression(ExpressionA={ 'Operation': 'Union' if union else 'Intersection', 'SourceRoiNames': combo, 'MarginSettings': { 'Type': 'Expand', 'Superior': 0, 'Inferior': 0, 'Anterior': 0, 'Posterior': 0, 'Right': 0, 'Left': 0 } })
+            
+            self._to_update.append(derived.Name)  # The new ROI will need updating
+        
+    def _subtraction(self, derived_name: str):
+        """Creates a derived ROI that is one ROI subtracted from another
 
-    def planning_region_volume(exp, source_name):
+        Arguments
+        ---------
+        minuend: Name of the ROI to subtract from
+        subtrahend: Name of the ROI to subtract
+        """
+        # Get all minuends and subtrahends
+        minuend, subtrahend = derived_name.split('-')
+        minuends = self._matching_roi_names(minuend)
+        subtrahends = self._matching_roi_names(subtrahend)
+        if not minuends or not subtrahends:
+            return
+
+        # Create derived ROI for each combination of minuend and subtrahend
+        for minuend in minuends:
+            for subtrahend in subtrahends:
+                derived_name = minuend + '-' + subtrahend
+                derived.SetAlgebraExpression(ExpressionA={ 'Operation': 'Union', 'SourceRoiNames': [minuend], 'MarginSettings': { 'Type': 'Expand', 'Superior': 0, 'Inferior': 0, 'Anterior': 0, 'Posterior': 0, 'Right': 0, 'Left': 0 } }, ExpressionB={ 'Operation': 'Union', 'SourceRoiNames': [subtrahend], 'MarginSettings': { 'Type': 'Expand', 'Superior': 0, 'Inferior': 0, 'Anterior': 0, 'Posterior': 0, 'Right': 0, 'Left': 0 } }, ResultOperation='Subtraction', ResultMarginSettings={ 'Type': 'Expand', 'Superior': 0, 'Inferior': 0, 'Anterior': 0, 'Posterior': 0, 'Right': 0, 'Left': 0 })
+                self._to_update.append(derived.Name)  # The new ROI will need updating
+
+    def _expansion(self, derived_name):
         # Helper function that sets a margin expression for the given organ
         # `exp`: Uniform expansion amount, in mm
         # `source_name`: Name of the ROI to expand
         # `derived_name`: Name of the PRV ROI. If None, new ROI name is source name + 'PRV' + two-digit expansion. 
         #                 Necessary to specify because 16-character limit may cause name to differ fro standard.
+        m = re.match(r'(.+)((PRV)|(Ev))(\d{2})', derived_name)
+        source_name = m.group(1)
+        exp_str = m.group(2)
+        exp = int(m.group(3))
+        exp_cm = exp / 10
+        
+        source_names = self._matching_roi_names(source_name)
+        if not source_names:
+            return
+        
+        # Create derived ROI for each source name
+        for source_name in source_names:
+            derived_name = source_name + exp_str + str(exp).zfill(2)
+            derived = self._create_roi(derived_name)
+            derived.SetMarginExpression(SourceRoiName=source_name, MarginSettings={ 'Type': 'Expand', 'Superior': exp_cm, 'Inferior': exp_cm, 'Anterior': exp_cm, 'Posterior': exp_cm, 'Right': exp_cm, 'Left': exp_cm })
+            self._to_update.append(derived.Name)  # The new ROI will need updating
 
-        derived_name =self._unique_roi_name(f'{source_name}_PRV{str(exp).zfill(2)}')
-        exp /= 10  # mm -> cm
-
-        derived.SetMarginExpression(SourceRoiName=source.Name, MarginSettings={ 'Type': 'Expand', 'Superior': exp, 'Inferior': exp, 'Anterior': exp, 'Posterior': exp, 'Right': exp, 'Left': exp })
-            to_update.append(derived.Name)
-
-
+    def create_derived_rois(self):
+        for name, color in self._tg263.iterrows():
+            if '&' in name:
+                self._union_or_intersection(name)
+            elif '|' in name:
+                self._union_or_intersection(name, False)
+            elif 'PRV' in name or 'Ev' in name:
+                self._expansion(name)
 
 def add_derived_rois():
-    """Add derived ROI geometries from the 'Clinical Goals' spreadsheet
-
-    Types of derived geometries created:
-    - Bilateral organ sums (e.g., 'Lungs' = 'Lung_L' + 'Lung_R')
-    - Other, misc. sums (e.g., 'Jejunum_Ileum' = 'Jejunum' + 'Ileum')
-    - Overlaps (intersections) (e.g., 'BneMdbl&JntTM&PTV' = 'Bone_Mandible' & 'Joint_TM' & PTV)
-    - Target exclusions (subtracting a target volume from an organ) (e.g., 'Brain-PTV' = 'Brain' - PTV)
-    - Planning regions volumes (PRVs) (e.g., 'Brainstem_PRV03' = 3mm expansion of 'Brainstem')
-    - 'E-PTV_Ev20' (SBRT plans only)
+    """Add derived ROI geometries from the 'TG-263 Nomenclature with CRMC Colors' spreadsheet
 
     If source ROI(s) do not exist in the current case, derived ROI(s) that depend on them are not created.
-    
-    Source ROIs are the ROIs with the 'latest' name.
-    Example:
-    We are creating 'Lungs' from 'Lung_L' and 'Lung_R'. ROIs 'Lung_L' and 'Lung_L (1)' exist. 'Lung_L (1)' has the highest copy number, so it is used.
-
-    Derived geometries are created for the latest unapproved ROIs with the desired derived name. If none such ROIs exist, a new ROI is created.
-    Example:
-    We are creating 'Lungs'. ROIs 'Lungs' and 'Lungs (1)' exist, but 'Lungs (1)' is approved, so 'Lungs' is used. If both 'Lungs' and 'Lungs (1)' were approved, we would create a new ROI 'Lungs (2)'.
 
     Assumptions
     -----------
@@ -160,7 +199,6 @@ def add_derived_rois():
         MessageBox.Show('There are no exams in the current case. Click OK to abort script.', 'No Exams')
         sys.exit(1)
 
-    to_update = []
 
     
 

@@ -55,7 +55,7 @@ def copy_plan_without_changes():
     new_plan = case.TreatmentPlans[new_plan_name]
     
     # Get unique beam number
-    beam_num = 1
+    beam_num = 0
     for c in patient.Cases:
         for p in c.TreatmentPlans:
             for bs in p.BeamSets:
@@ -63,6 +63,7 @@ def copy_plan_without_changes():
                     beam_num = max(beam_num, max(b.Number for b in bs.Beams))
                 if bs.PatientSetup.SetupBeams.Count > 0:
                     beam_num = max(beam_num, max(b.Number for b in bs.PatientSetup.SetupBeams))
+    beam_num += 1
     
     # Rename beam sets, beams, and isos
     for i, bs in enumerate(new_plan.BeamSets):

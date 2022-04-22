@@ -71,7 +71,7 @@ class CompareContoursForm(Form):
         # "OK" button to submit input
         self._ok_btn = Button()
         self._set_up_ok_btn()
-
+        
     def _input_chged(self, sender, event):
         # Event handler for DGV CellValueChanged, DGV SelectionChanged, and ComboBox SelectedValueChanged
         # Sets self.copy_to and self.copy_from
@@ -86,9 +86,10 @@ class CompareContoursForm(Form):
             row_idx = row.Index
             exam_name = self._from_exams_dgv[self._exam_col.Index, row_idx].Value
             suffix = self._from_exams_dgv[self._suffix_col.Index, row_idx].Value
-            self.copy_from[exam_name] = suffix
+            self.copy_from[exam_name] = suffix if suffix is not None else ''
         
         # Convert all suffixes to lowercase for case-insensitive uniqueness check
+        print(self.copy_from)
         lower_suffixes = [suffix.lower() for suffix in self.copy_from.values()]
 
         # Enable or disable "OK" button
@@ -189,14 +190,11 @@ class CompareContoursForm(Form):
         # Add a row with an empty suffix for each exam
         for exam_name, suffix in self.copy_from.items():
             self._from_exams_dgv.Rows.Add([exam_name, suffix])
-
-        # By default, no exams are selected to copy from
-        self._from_exams_dgv.ClearSelection()
         
         # Resize table to contents
         self._from_exams_dgv.Width = sum(col.Width for col in self._from_exams_dgv.Columns) + 2
         self._from_exams_dgv.Height = self._from_exams_dgv.Rows[0].Height * (self._from_exams_dgv.Rows.Count + 1)
-        
+
         self._y += self._from_exams_dgv.Height + 15
 
     def _style_form(self):

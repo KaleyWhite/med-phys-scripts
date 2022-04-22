@@ -1,12 +1,15 @@
 import clr
 from collections import OrderedDict
 import sys
-from typing import Dict, Tuple
+from typing import Any, Dict, Tuple
 
 from connect import *
+from connect.connect_cpython import PyScriptObject  # For type hints
 
+clr.AddReference('System')
 clr.AddReference('System.Drawing')
 clr.AddReference('System.Windows.Forms')
+from System import EventArgs  # For type hints
 from System.Drawing import *
 from System.Windows.Forms import *
 
@@ -15,7 +18,9 @@ from copy_plan_without_changes import copy_plan_without_changes
 
 
 class CopyOptStuffForm(Form):
-    def __init__(self, curr_plan_name: str, plan_info: Dict[str, Tuple[bool, bool]]):
+    """Class that allows the user to choose settings for copying clinical goals, objectives and constraints, and/or optimization parameters between plans"""
+
+    def __init__(self, curr_plan_name: str, plan_info: Dict[str, Tuple[bool, bool]]) -> None:
         """Initializes a CopyOptStuffForm object
 
         Arguments:
@@ -42,29 +47,37 @@ class CopyOptStuffForm(Form):
         self.copy_btn = Button()
 
         self.set_up_layout()
-        # Redraw table
-        #self.data_grid_view.Invalidate()
-        self.Invalidate()
+        self.Invalidate()  # Redraw form
 
-    def data_grid_view_CellContentClick(self, sender, event):
+    # ---------------------------------------------------------------------------- #
+    #                                Event handlers                                #
+    # ---------------------------------------------------------------------------- #
+
+    # ------------------------------ data_grid_view ------------------------------ #
+
+    def data_grid_view_CellContentClick(self, sender: DataGridView, event: DataGridViewCellEventArgs) -> None:
         # Event handler for clicking a checkbox
         # This allows the cell value to actually change (the CellValueChanged event to be fired)
         self.data_grid_view.CommitEdit(DataGridViewDataErrorContexts.Commit)
 
-    def data_grid_view_CellPainting(self, sender, event):
+    def data_grid_view_CellPainting(self, sender: DataGridView, event: DataGridViewCellPaintingEventArgs) -> None:
         # Event handler for when the DGV is redrawn
         # Fills cells with gray instead of a checkbox if the cell corresponds to a False in the plan_info dict
         
         # Determine whether to color the cell gray or leave it alone
-        # Only color non-header, read-only cells in a CheckBoxColumn
+        # Only color non-header, read-only cells in goals or objectives/constraints column
         if event.RowIndex >= 0 and event.ColumnIndex != self.plan_col.Index:
-            if event.ColumnIndex in [self.copy_goals_col.Index, self.copy_objs_col.Index] and self.data_grid_view[event.ColumnIndex, event.RowIndex].ReadOnly:
-                # Fill with gray
-                brush = SolidBrush(event.CellStyle.BackColor)
-                event.Graphics.FillRectangle(brush, event.CellBounds)
+            if event.ColumnIndex in [self.copy_goals_col.Index, self.copy_objs_col.Index]:
+                if self.data_grid_view[event.ColumnIndex, event.RowIndex].ReadOnly:
+                    # Fill with gray
+                    brush = SolidBrush(event.CellStyle.BackColor)
+                    event.Graphics.FillRectangle(brush, event.CellBounds)
+                    
+                    event.Handled = True
 
                 # Replace the black outline that the filled rectangle covers
                 event.Paint(event.CellBounds, DataGridViewPaintParts.Border)
+                
             elif event.ColumnIndex == self.copy_params_col.Index:
                 # Draw radio button
                 #event.PaintBackground(event.ClipBounds, True)
@@ -76,21 +89,24 @@ class CopyOptStuffForm(Form):
                 rb_state = ButtonState.Checked if event.Value else ButtonState.Normal
                 ControlPaint.DrawRadioButton(event.Graphics, rb, rb_state)
                 event.Paint(event.CellBounds, DataGridViewPaintParts.Focus)
-            
-            # Skip the rest of the event handler
-            event.Handled = True
 
-    def data_grid_view_CellValueChanged(self, sender, event):
+                # Replace the black outline that the filled rectangle covers
+                event.Paint(event.CellBounds, DataGridViewPaintParts.Border)
+            
+                event.Handled = True
+
+    def data_grid_view_CellValueChanged(self, sender: DataGridView, event: DataGridViewCellEventArgs) -> None:
         # Event handler for cell value change in the DGV
         # Updates lists of plans to copy goals/objs from, and enables or disables the "OK" button accordingly
 
         # Only look at the CheckBoxColumns
         if event.ColumnIndex > 0:
-            plan_name = self.data_grid_view[0, event.RowIndex]
+            plan_name = self.data_grid_view[0, event.RowIndex].Value
             val = self.data_grid_view[event.ColumnIndex, event.RowIndex].Value
             # Select copy_goals_from, copy_objs_from, or copy_params_from list depending on which column the clicked checkbox belongs to
             if event.ColumnIndex in [self.copy_goals_col.Index, self.copy_objs_col.Index]:
-                l = self.copy_goals_from if event.RowIndex == self.copy_goals_col.Index else self.copy_objs_from
+                print(event.ColumnIndex, self.copy_goals_col.Index, self.copy_objs_col.Index)
+                l = self.copy_goals_from if event.ColumnIndex == self.copy_goals_col.Index else self.copy_objs_from
                 if val:  # The checkbox was checked
                     # Add plan name to list if it is not already there
                     if plan_name not in l:
@@ -103,19 +119,27 @@ class CopyOptStuffForm(Form):
                 self.copy_params_from = plan_name
             else:
                 self.copy_params_from = None
-            
+            print(self.copy_goals_from, self.copy_objs_from)
             # Enable "OK" button only if at least one set of goals or objectives is checked
             self.copy_btn.Enabled = self.copy_goals_from or self.copy_objs_from or self.copy_params_from is not None
 
-    def data_grid_view_CurrentCellDirtyStateChanged(self, sender, event):
+    def data_grid_view_CurrentCellDirtyStateChanged(self, sender: DataGridView, event: EventArgs) -> None:
+        # Event handler for change in radio button state
+        # When a radio button in the opt params column is selected, deselect all other radio buttons in that column
         if self.data_grid_view.CurrentCell.ColumnIndex == self.copy_params_col.Index:
             for row in self.data_grid_view.Rows:
                 if row.Index != self.data_grid_view.CurrentCell.RowIndex:
                     row.Cells[self.copy_params_col.Index].Value = False
 
+    # --------------------------------- copy_btn --------------------------------- #
+
     def copy_Click(self, sender, event):
         # Event handler for "OK" button
         self.DialogResult = DialogResult.OK
+
+    # ---------------------------------------------------------------------------- #
+    #                                 Setup methods                                #
+    # ---------------------------------------------------------------------------- #
 
     def set_up_layout(self):
         # Styles controls and adds them to the Form
@@ -150,6 +174,8 @@ class CopyOptStuffForm(Form):
         self.copy_btn.Location = Point(self.Width // 2, self.y)
         self.copy_btn.Text = 'OK'
         self.copy_btn.Click += self.copy_Click
+
+    # ------------------------------ data_grid_view ------------------------------ #
 
     def set_up_data_grid_view(self):
         # Style and add a DGV to the Form
@@ -214,8 +240,7 @@ class CopyOptStuffForm(Form):
         # Add rows to the DGV, from the plan_info dictionary
 
         # Populate rows
-        for i, plan_name in enumerate(self.plan_info):
-            print(plan_name)
+        for plan_name in self.plan_info:
             # Skip current plan b/c we don't want to copy to itself
             if plan_name == self.curr_plan_name:
                 continue
@@ -227,16 +252,21 @@ class CopyOptStuffForm(Form):
 
             # Disable "Copy" checkbox if plan does not have goals/objectives
             has_goals, has_objs = self.plan_info[plan_name]
-            row = self.data_grid_view.Rows[i]  # The row we just added
+            row = self.data_grid_view.Rows[self.data_grid_view.Rows.Count - 1]  # The row we just added
             if not has_goals:
                 self.disable_checkbox(row.Cells['Copy Clinical Goals'])
             if not has_objs:
                 self.disable_checkbox(row.Cells['Copy Objectives & Constraints'])
 
         # Resize table to contents
-        self.data_grid_view.Width = sum(col.Width + 37 for col in self.data_grid_view.Columns)
+        self.data_grid_view.Width = sum(col.Width + 40 for col in self.data_grid_view.Columns)
         self.data_grid_view.Height = self.data_grid_view.Rows[0].Height * (self.data_grid_view.Rows.Count + 1)
+        
         self.y += self.data_grid_view.Height + 15
+
+    # ---------------------------------------------------------------------------- #
+    #                          Methods to create controls                          #
+    # ---------------------------------------------------------------------------- #
 
     def create_clear_checkbox(self, txt, x):
         # Helper function that returns a "Clear ___" checkbox
@@ -260,6 +290,10 @@ class CopyOptStuffForm(Form):
 
         return col
 
+    # ---------------------------------------------------------------------------- #
+    #                                 Misc. methods                                #
+    # ---------------------------------------------------------------------------- #
+
     def disable_checkbox(self, cell):
         # Helper function that "disables" a checkbox if the plan does not have goals/objectives to copy
 
@@ -267,9 +301,22 @@ class CopyOptStuffForm(Form):
         cell.ReadOnly = True
 
 
-def copy_clinical_goals(old_plan, new_plan):
+# ---------------------------------------------------------------------------- #
+#                             Functions for copying                            #
+# ---------------------------------------------------------------------------- #
+
+# ------------------------------ Clinical goals ------------------------------ #
+
+def copy_clinical_goals(old_plan: PyScriptObject, new_plan: PyScriptObject):
+    """Copies clinical goals from one plan to another
+
+    Arguments
+    ---------
+    old_plan: The plan to copy clinical goals from
+    new_plan: The plan to copy clinical goals to
+    """
     old_goals = old_plan.TreatmentCourse.EvaluationSetup.EvaluationFunctions
-    new_goals = new_plan.TreatmentCourse.EvaluationSetup.EvaluationFunctions
+    new_eval_setup = new_plan.TreatmentCourse.EvaluationSetup
     for goal in old_goals:
         goal_args = {
             'RoiName': goal.ForRegionOfInterest.Name,
@@ -279,19 +326,32 @@ def copy_clinical_goals(old_plan, new_plan):
             'ParameterValue': goal.PlanningGoal.ParameterValue,
             'Priority': goal.PlanningGoal.Priority,
         }
-        new_goals.AddClinicalGoal(**goal_args)
+        try:
+            new_eval_setup.AddClinicalGoal(**goal_args)
+        except:  # Goal already exists in new plan
+            continue
 
 
-# All code for copy objectives/constraints is taken from RaySearch's Scripting Guideline script Example_19_Copy_optimization_functions
+# ------------------------ Objectives and constraints ------------------------ #
 
-# Define a function that will retrieve the necessary information
-# and put it in a dictionary.
-def get_arguments_from_function(function):
+# All code for copy objectives/constraints is modified from RaySearch's Scripting Guideline script Example_19_Copy_optimization_functions
+
+def get_arguments_from_function(function: PyScriptObject) -> Dict[str, Any]:
+    """Returns a dictionary of arguments for an objective or constraint function.
+
+    Arguments
+    ---------
+    function: The plan_opt.Objective.ConstituentFunction or plan_opt.Constraint object whose parameters to return
+    """
     dfp = function.DoseFunctionParameters
+
+    # Args common to all function types
     arg_dict = {}
     arg_dict['RoiName'] = function.ForRegionOfInterest.Name
     arg_dict['IsRobust'] = function.UseRobustness
     arg_dict['Weight'] = dfp.Weight
+
+    # Function type-specific arguments
     if hasattr(dfp, 'FunctionType'):
         if dfp.FunctionType == 'UniformEud':
             arg_dict['FunctionType'] = 'TargetEud'
@@ -303,27 +363,34 @@ def get_arguments_from_function(function):
         elif 'Dvh' in dfp.FunctionType:
             arg_dict['PercentVolume'] = dfp.PercentVolume
     elif hasattr(dfp, 'HighDoseLevel'):
-        # Dose fall-off function does not have function type attribute.
+        # Dose fall-off function does not have FunctionType attribute
         arg_dict['FunctionType'] = 'DoseFallOff'
         arg_dict['HighDoseLevel'] = dfp.HighDoseLevel
         arg_dict['LowDoseLevel'] = dfp.LowDoseLevel
         arg_dict['LowDoseDistance'] = dfp.LowDoseDistance
     elif hasattr(dfp, 'PercentStdDeviation'):
-        # Uniformity constraint does not have function type.
+        # Uniformity constraint does not have FunctionType attribute
         arg_dict['FunctionType'] = 'UniformityConstraint'
         arg_dict['PercentStdDeviation'] = dfp.PercentStdDeviation
     else:
-        # Unknown function type, raise exception.
+        # Unknown function type, so raise exception
         raise ('Unknown function type')
 
     return arg_dict
 
 
-# Define a function that will use information in arg_dict to set
-# optimization function parameters.
-def set_function_arguments(function, arg_dict):
+def set_function_arguments(function: PyScriptObject, arg_dict: Dict[str, Any]) -> None:
+    """Sets optimization function parameters for an objective or constraint function.
+
+    Arguments
+    ---------
+    function: The plan_opt.Objective.ConstituentFunction or plan_opt.Constraint object whose parameters to set
+    arg_dict: The dictionary of function parameters
+    """
     dfp = function.DoseFunctionParameters
-    dfp.Weight = arg_dict['Weight']
+    dfp.Weight = arg_dict['Weight']  # All function types have Weight attribute
+    
+    # Function type-specific parameters
     if arg_dict['FunctionType'] == 'DoseFallOff':
         dfp.HighDoseLevel = arg_dict['HighDoseLevel']
         dfp.LowDoseLevel = arg_dict['LowDoseLevel']
@@ -338,41 +405,45 @@ def set_function_arguments(function, arg_dict):
             dfp.PercentVolume = arg_dict['PercentVolume']
 
 
-def copy_objectives_and_constraints(old_plan, new_plan):
-    # Loop over all objectives and constraints in the original plan
-    # to retrieve information. It is assumed that the original plan
-    # only contains one beam set.
-    po_original = original_plan.PlanOptimizations[0]
-    arguments = [] # List to hold arg_dicts of all functions.
+def copy_objectives_and_constraints(old_opt: PyScriptObject, new_opt: PyScriptObject) -> None:
+    """Copies all objectives (plan_opt.Objective.ConstituentFunctions and constraints (plan_opt.Constraints) from one plan to another.
 
-    # Get arguments from objective functions.
-    if po_original.Objective != None:
-        for cf in po_original.Objective.ConstituentFunctions:
-            arg_dict = get_arguments_from_function(cf)
+    Does not check whether the objective/constraint already exists, so duplicates may occur.
+
+    Arguments
+    ---------
+    old_opt: The plan optimization object to copy objectives and constraints from
+    new_opt: The plan optimization object to copy objectives and constraints to
+    """
+    arguments = []  # List to hold arg_dicts of all functions.
+
+    # Get arguments from objective functions
+    if old_opt.Objective is not None:  # Old plan has optimization function(s)
+        for constituent_func in old_opt.Objective.ConstituentFunctions:
+            arg_dict = get_arguments_from_function(constituent_func)
             arg_dict['IsConstraint'] = False
             arguments.append(arg_dict)
 
-    # Get arguments from constraint functions.
-    for cf in po_original.Constraints:
-        arg_dict = get_arguments_from_function(cf)
+    # Get arguments from constraint functions
+    for constituent_func in old_opt.Constraints:
+        arg_dict = get_arguments_from_function(constituent_func)
         arg_dict['IsConstraint'] = True
         arguments.append(arg_dict)
 
-    # Add optimization functions to the new plan.
-    po_new = new_plan.PlanOptimizations[0]
+    # Add optimization functions to the new plan
     for arg_dict in arguments:
         with CompositeAction('Add Optimization Function'):
-            f = po_new.AddOptimizationFunction(FunctionType = arg_dict['FunctionType'],
-                                            RoiName = arg_dict['RoiName'],
-                                            IsConstraint = arg_dict['IsConstraint'],
-                                            IsRobust = arg_dict['IsRobust'])
-            set_function_arguments(f, arg_dict)
+            func = new_opt.AddOptimizationFunction(FunctionType=arg_dict['FunctionType'],
+                                            RoiName=arg_dict['RoiName'],
+                                            IsConstraint=arg_dict['IsConstraint'],
+                                            IsRobust=arg_dict['IsRobust'])
+            set_function_arguments(func, arg_dict)
 
 
-def copy_opt_params(old_plan: PyScriptObject, new_plan: PyScriptObject) -> None:
-    """Copies select optimization parameters from one beam set to another.
+# -------------------------- Optimization parameters ------------------------- #
 
-    Assumes only one beam set per plan optimization.
+def copy_opt_params(old_opt: PyScriptObject, new_opt: PyScriptObject) -> None:
+    """Copies select optimization parameters from one plan optimization object to another.
 
     Copies the following optimization parameters:
     - Autoscale to prescription
@@ -389,27 +460,24 @@ def copy_opt_params(old_plan: PyScriptObject, new_plan: PyScriptObject) -> None:
     This function is modified from the RayStation 11A Scripting Guideline.
     
     Args:
-        patient: The patient that the beam sets belong to.
-        old_beam_set: The beam set to copy optimization parameters from.
-        new_beam_set: The beam set to copy optimization parameters to.
+        old_opt: The plan optimization object to copy optimization parameters from
+        new_opt: The plan optimization object to copy optimization parameters to
     """
-    old_plan_opt = old_plan.PlanOptimizations[0]
-    new_plan_opt = new_plan.PlanOptimizations[0]
-
     with CompositeAction('Copy Select Optimization Parameters'):
-        new_plan_opt.AutoScaleToPrescription = old_plan_opt.AutoScaleToPrescription
+        new_opt.AutoScaleToPrescription = old_opt.AutoScaleToPrescription
 
-        new_plan_opt.OptimizationParameters.Algorithm.MaxNumberOfIterations = old_plan_opt.OptimizationParameters.Algorithm.MaxNumberOfIterations
-        new_plan_opt.OptimizationParameters.Algorithm.OptimalityTolerance = old_plan_opt.OptimizationParameters.Algorithm.OptimalityTolerance
+        new_opt.OptimizationParameters.Algorithm.MaxNumberOfIterations = old_opt.OptimizationParameters.Algorithm.MaxNumberOfIterations
+        new_opt.OptimizationParameters.Algorithm.OptimalityTolerance = old_opt.OptimizationParameters.Algorithm.OptimalityTolerance
         
-        new_plan_opt.OptimizationParameters.DoseCalculation.ComputeFinalDose = old_plan_opt.OptimizationParameters.DoseCalculation.ComputeFinalDose
-        new_plan_opt.OptimizationParameters.DoseCalculation.ComputeIntermediateDose = old_plan_opt.OptimizationParameters.DoseCalculation.ComputeIntermediateDose
-        new_plan_opt.OptimizationParameters.DoseCalculation.IterationsInPreparationsPhase = old_plan_opt.OptimizationParameters.DoseCalculation.IterationsInPreparationsPhase
+        new_opt.OptimizationParameters.DoseCalculation.ComputeFinalDose = old_opt.OptimizationParameters.DoseCalculation.ComputeFinalDose
+        new_opt.OptimizationParameters.DoseCalculation.ComputeIntermediateDose = old_opt.OptimizationParameters.DoseCalculation.ComputeIntermediateDose
+        new_opt.OptimizationParameters.DoseCalculation.IterationsInPreparationsPhase = old_opt.OptimizationParameters.DoseCalculation.IterationsInPreparationsPhase
 
-        old_beam_set = old_plan_opt.OptimizedBeamSets[0]
+        # VMAT-specific parameters
+        old_beam_set = old_opt.OptimizedBeamSets[0]
         if old_beam_set.Modality == 'Photons' and old_beam_set.PlanGenerationTechnique == 'Imrt' and old_beam_set.DeliveryTechnique == 'DynamicArc':
-            for i, old_tx_setup_settings in enumerate(old_plan_opt.OptimizationParameters.TreatmentSetupSettings):
-                new_tx_setup_settings = new_plan_opt.OptimizationParameters.TreatmentSetupSettings[i]
+            for i, old_tx_setup_settings in enumerate(old_opt.OptimizationParameters.TreatmentSetupSettings):
+                new_tx_setup_settings = new_opt.OptimizationParameters.TreatmentSetupSettings[i]
                 
                 new_tx_setup_settings.SegmentConversion.ArcConversionProperties.MaxLeafTravelDistancePerDegree = old_tx_setup_settings.SegmentConversion.ArcConversionProperties.MaxLeafTravelDistancePerDegree
                 new_tx_setup_settings.SegmentConversion.ArcConversionProperties.UseMaxLeafTravelDistancePerDegree = old_tx_setup_settings.SegmentConversion.ArcConversionProperties.UseMaxLeafTravelDistancePerDegree
@@ -420,6 +488,10 @@ def copy_opt_params(old_plan: PyScriptObject, new_plan: PyScriptObject) -> None:
                     if old_beam_set_props.NumberOfArcs != new_beam_set_props.NumberOfArcs or old_beam_set_props.FinalArcGantrySpacing != new_beam_set_props.FinalArcGantrySpacing or old_beam_set_props.MaxArcDeliveryTime != new_beam_set_props.MaxArcDeliveryTime:
                         new_beam_set_props.EditArcBasedBeamOptimizationSettings(CreateDualArcs=old_beam_set_props.NumberOfArcs == 2, FinalGantrySpacing=old_beam_set_props.FinalArcGantrySpacing, MaxArcDeliveryTime=old_beam_set_props.MaxArcDeliveryTime) 
 
+
+# ---------------------------------------------------------------------------- #
+#                                 Main function                                #
+# ---------------------------------------------------------------------------- #
 
 def copy_opt_stuff():
     """Copies clinical goals and/or objectives and constraints from other plan(s) to the current plan
@@ -449,6 +521,11 @@ def copy_opt_stuff():
         MessageBox.Show('There are no plans in the current case. Click OK to abort the script.', 'No Plans')
         sys.exit()
 
+    # Exit script if there is only one plan in the current case
+    if case.TreatmentPlans.Count == 1:
+        MessageBox.Show('There is only one plan in the open case. Click OK to abort the script.', 'Only One Plan')
+        sys.exit()
+
     # Plan names that contain goals and objectives, respectively
     plan_info = OrderedDict()
     for p in case.TreatmentPlans:
@@ -472,6 +549,10 @@ def copy_opt_stuff():
     if form.DialogResult != DialogResult.OK:
         sys.exit()
 
+    # Plan optimization of the plan we are copying to
+    new_plan_opt = plan.PlanOptimizations[0]
+    print(plan.Name, new_plan_opt.Objective)
+
     # Clear existing clinical goals if the user so desires
     if form.clear_existing_goals_cb.Checked:
         with CompositeAction('Clear Clinical Goals'):
@@ -481,10 +562,13 @@ def copy_opt_stuff():
     # Clear existing objectives and constraints if the user so desires
     if form.clear_existing_objs_cb.Checked:
         with CompositeAction('Clear Objectives and Constraints'):
-            while plan.PlanOptimizations[0].Constraints.Count > 0:
-                plan.PlanOptimizations[0].Constraints[0].DeleteFunction()
-            while plan.PlanOptimizations[0].Objective.ConstituentFunctions.Count > 0:
-                plan.PlanOptimizations[0].Objective.ConstituentFunctions[0].DeleteFunction()
+            while new_plan_opt.Constraints.Count > 0:
+                new_plan_opt.Constraints[0].DeleteFunction()
+            try:
+                while new_plan_opt.Objective.ConstituentFunctions.Count > 0:
+                    new_plan_opt.Objective.ConstituentFunctions[0].DeleteFunction()
+            except:  # Has no objcetives
+                pass
 
     # Copy the goals/objectives
     copy_goals_from = sorted(form.copy_goals_from, key=lambda x: x.lower())
@@ -492,6 +576,6 @@ def copy_opt_stuff():
     for plan_name in copy_goals_from:
         copy_clinical_goals(case.TreatmentPlans[plan_name], plan)
     for plan_name in copy_objs_from:
-        copy_objectives_and_constraints(case.TreatmentPlans[plan_name], plan)
+        copy_objectives_and_constraints(case.TreatmentPlans[plan_name].PlanOptimizations[0], plan.PlanOptimizations[0])
     if form.copy_params_from is not None:
-        copy_opt_params(case.TreatmentPlans[form.copy_params_from], plan)
+        copy_opt_params(case.TreatmentPlans[form.copy_params_from].PlanOptimizations[0], plan.PlanOptimizations[0])
