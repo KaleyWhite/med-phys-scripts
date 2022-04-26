@@ -15,7 +15,7 @@ from System.Windows.Forms import MessageBox  # I use to display errors
 EXPORT_PATH = r'T:\Physics\Temp\AddCouchScript'
 
 
-def add_couch():
+def add_couch() -> None:
     """Adds template couch structures at correct location on current exam
 
     Correct location is R-L center, I-S center, and aligned with sim couch P-A
