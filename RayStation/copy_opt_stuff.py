@@ -105,7 +105,6 @@ class CopyOptStuffForm(Form):
             val = self.data_grid_view[event.ColumnIndex, event.RowIndex].Value
             # Select copy_goals_from, copy_objs_from, or copy_params_from list depending on which column the clicked checkbox belongs to
             if event.ColumnIndex in [self.copy_goals_col.Index, self.copy_objs_col.Index]:
-                print(event.ColumnIndex, self.copy_goals_col.Index, self.copy_objs_col.Index)
                 l = self.copy_goals_from if event.ColumnIndex == self.copy_goals_col.Index else self.copy_objs_from
                 if val:  # The checkbox was checked
                     # Add plan name to list if it is not already there
@@ -119,7 +118,7 @@ class CopyOptStuffForm(Form):
                 self.copy_params_from = plan_name
             else:
                 self.copy_params_from = None
-            print(self.copy_goals_from, self.copy_objs_from)
+
             # Enable "OK" button only if at least one set of goals or objectives is checked
             self.copy_btn.Enabled = self.copy_goals_from or self.copy_objs_from or self.copy_params_from is not None
 
@@ -133,7 +132,7 @@ class CopyOptStuffForm(Form):
 
     # --------------------------------- copy_btn --------------------------------- #
 
-    def copy_Click(self, sender, event):
+    def copy_Click(self, sender: Button, event: EventArgs) -> None:
         # Event handler for "OK" button
         self.DialogResult = DialogResult.OK
 
@@ -141,7 +140,7 @@ class CopyOptStuffForm(Form):
     #                                 Setup methods                                #
     # ---------------------------------------------------------------------------- #
 
-    def set_up_layout(self):
+    def set_up_layout(self) -> None:
         # Styles controls and adds them to the Form
     
         self.Text = 'Copy Optimization Stuff'  # Form title
@@ -177,7 +176,7 @@ class CopyOptStuffForm(Form):
 
     # ------------------------------ data_grid_view ------------------------------ #
 
-    def set_up_data_grid_view(self):
+    def set_up_data_grid_view(self) -> None:
         # Style and add a DGV to the Form
 
         # Basic settings
@@ -218,7 +217,7 @@ class CopyOptStuffForm(Form):
         self.add_data_grid_cols()
         self.populate_data_grid_view()
 
-    def add_data_grid_cols(self):
+    def add_data_grid_cols(self) -> None:
         # Adds the three columns to the table: "Plan", "Copy Clinical Goals", and "Copy Objectives & Constraints"
         # "Plan" column
         self.plan_col = DataGridViewTextBoxColumn()
@@ -236,7 +235,7 @@ class CopyOptStuffForm(Form):
         self.copy_params_col = self.create_copy_col('Copy Optimization Parameters')
         self.data_grid_view.Columns.Add(self.copy_params_col)
 
-    def populate_data_grid_view(self):
+    def populate_data_grid_view(self) -> None:
         # Add rows to the DGV, from the plan_info dictionary
 
         # Populate rows
@@ -268,7 +267,7 @@ class CopyOptStuffForm(Form):
     #                          Methods to create controls                          #
     # ---------------------------------------------------------------------------- #
 
-    def create_clear_checkbox(self, txt, x):
+    def create_clear_checkbox(self, txt: str, x: int) -> CheckBox:
         # Helper function that returns a "Clear ___" checkbox
         # txt: Text attribute
         # x: x-coordinate of checkbox
@@ -281,7 +280,7 @@ class CopyOptStuffForm(Form):
 
         return cb
 
-    def create_copy_col(self, txt):
+    def create_copy_col(self, txt: str) -> DataGridViewCheckBoxColumn:
         # Helper function that returns a "Copy ___" DGV column
         # txt: column name
 
@@ -294,7 +293,7 @@ class CopyOptStuffForm(Form):
     #                                 Misc. methods                                #
     # ---------------------------------------------------------------------------- #
 
-    def disable_checkbox(self, cell):
+    def disable_checkbox(self, cell: DataGridViewCheckBoxCell) -> None:
         # Helper function that "disables" a checkbox if the plan does not have goals/objectives to copy
 
         cell.Style.BackColor = Color.Gray
@@ -307,7 +306,7 @@ class CopyOptStuffForm(Form):
 
 # ------------------------------ Clinical goals ------------------------------ #
 
-def copy_clinical_goals(old_plan: PyScriptObject, new_plan: PyScriptObject):
+def copy_clinical_goals(old_plan: PyScriptObject, new_plan: PyScriptObject) -> None:
     """Copies clinical goals from one plan to another
 
     Arguments
@@ -493,7 +492,7 @@ def copy_opt_params(old_opt: PyScriptObject, new_opt: PyScriptObject) -> None:
 #                                 Main function                                #
 # ---------------------------------------------------------------------------- #
 
-def copy_opt_stuff():
+def copy_opt_stuff() -> None:
     """Copies clinical goals and/or objectives and constraints from other plan(s) to the current plan
 
     Goals and objectives are added in alphabetical order of selected plans (case insensitive)
@@ -551,7 +550,6 @@ def copy_opt_stuff():
 
     # Plan optimization of the plan we are copying to
     new_plan_opt = plan.PlanOptimizations[0]
-    print(plan.Name, new_plan_opt.Objective)
 
     # Clear existing clinical goals if the user so desires
     if form.clear_existing_goals_cb.Checked:
