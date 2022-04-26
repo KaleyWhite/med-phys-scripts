@@ -1,13 +1,40 @@
 import clr
+import os
 import sys
 
 from connect import *
+import pandas as pd
 
 clr.AddReference('System.Windows.Forms')
 from System.Windows.Forms import MessageBox  # For displaying errors
 
 
-def dose_grid_box() :
+# Absoluet path to the "TG-263 Nomenclature with CRMC Colors" spreadsheet
+TG263_PATH = os.path.join('T:', os.sep, 'Physics', 'KW', 'med-phys-spreadsheets', 'TG-263 Nomenclature with CRMC Colors.xlsm')
+
+
+def crmc_color(roi_name: str) -> str:
+    """Gets the CRMC conventional color for the provided ROI, according to the "TG-263 Nomenclature with CRMC Colors" spreadsheet
+
+    If the ROI name is not present in the spreadsheet, returns purple
+
+    Arguments
+    ---------
+    roi_name: The name of the ROI whose conventional color to return
+
+    Returns
+    -------
+    The ROI color, in the format "A, R, G, B"
+    """
+    tg263 = pd.read_excel(TG263_PATH, sheet_name='Names & Colors', usecols=['TG-263 Primary Name', 'Color'])
+    tg263.set_index('TG-263 Primary Name', drop=True, inplace=True)
+    try:
+        return tg263.loc[roi_name, 'Color'][1:-1]
+    except KeyError:
+        return Color.Purple
+
+
+def dose_grid_box() -> None:
     """Adds a box ROI with geometry that outlines the dose grid of the current beam set"""
 
     # Get current case
@@ -29,17 +56,12 @@ def dose_grid_box() :
     exam = struct_set.OnExamination
     dg = dose.InDoseGrid
     
-    # Get DoseGrid ROI if it exists; create it otherwise
-    try:
-        box = case.PatientModel.RegionsOfInterest['DoseGrid']
-        # Exit script if geometry is approved
-        for approved_ss in struct_set.ApprovedStructureSets:
-            for approved_geom in approved_ss.ApprovedRoiStructures:
-                if approved_geom.Name == 'DoseGrid':
-                    MessageBox.Show('DoseGrid geometry is approved, so it cannot be changed. Click OK to abort the script.', 'DoseGrid Is Approved')
-                    sys.exit()
-    except:
-        box = case.PatientModel.CreateRoi(Name='DoseGrid', Color='purple', Type='Control')
+    # Get DoseGrid ROI name and color
+    roi_name = case.PatientModel.GetUniqueRoiName(Name='zDoseGrid')
+    color = crmc_color('zDoseGrid')
+
+    # Create dose grid ROI
+    box = case.PatientModel.CreateRoi(Name=roi_name, Color=color, Type='Control')
     
     # Box size and center coordinates
     box_sz, box_ctr = {}, {}

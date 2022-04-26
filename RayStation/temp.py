@@ -1,9 +1,11 @@
-import pandas as pd
-COLORS_PATH = r'T:\Physics\KW\med-phys-spreadsheets\TG-263 Nomenclature with CRMC Colors.xlsm'
-def read_colors():
-    colors = pd.read_excel(COLORS_PATH, sheet_name='Names & Colors', usecols=['TG-263 Primary Name', 'Color'])
-    colors.set_index('TG-263 Primary Name', drop=True, inplace=True)
-    return colors['Color']
-
-colors = read_colors()
-print(colors['Chestwall_L'])
+import os, re
+base = r'T:\Physics\Elekta\Elekta Profiles Comparison\Profile Comparisons'
+r = r'^(ELEKTA|SBRT 6MV) vs (E\d Water Tank)'
+for f in os.listdir(base):
+    m = re.search(r, f)
+    if m is not None:
+        end = f[m.end():].strip().strip('- SBRT ')
+        new_f = m.group(2) + ' vs ' + m.group(1) + ' - ' + end
+        f = os.path.join(base, f)
+        new_f = os.path.join(base, new_f)
+        os.rename(f, new_f)

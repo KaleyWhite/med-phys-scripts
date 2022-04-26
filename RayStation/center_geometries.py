@@ -1,17 +1,27 @@
 import clr
 from collections import OrderedDict
 import sys
+from typing import Dict, List
 
 from connect import *
+from connect.connect_cpython import PyScriptObject  # For type hints
 
+clr.AddReference('System')
 clr.AddReference('System.Drawing')
 clr.AddReference('System.Windows.Forms')
+from System import EventArgs  # For type hints
 from System.Drawing import *
 from System.Windows.Forms import *
 
 
 class CenterGeometriesForm(Form):
-    def __init__(self, roi_names):
+    def __init__(self, roi_names: List[str]) -> None:
+        """Initializes a CenterGeometriesForm object
+
+        Arguments
+        ---------
+        roi_names: List of ROI names that the user can choose to center
+        """
         self.center_info = OrderedDict([(roi_name, [False] * 3) for roi_name in roi_names])
 
         self._y = 15
@@ -40,10 +50,10 @@ class CenterGeometriesForm(Form):
             self._ok_btn.Enabled = self._ok_btn.Enabled or val
             event.Handled = True
 
-    def _ok_btn_Click(self, sender, event):
+    def _ok_btn_Click(self, sender: Button, event: EventArgs) -> None:
         self.DialogResult = DialogResult.OK
 
-    def _set_up_form(self):
+    def _set_up_form(self) -> None:
         # Styles the Form
 
         self.Text = 'Center Geometries'  # Form title
@@ -57,7 +67,7 @@ class CenterGeometriesForm(Form):
         self.FormBorderStyle = FormBorderStyle.FixedToolWindow  # User cannot minimize, maximize, or resize form, but they can cancel ('X out of') it
         self.StartPosition = FormStartPosition.CenterScreen  # Position form in middle of screen
 
-    def _set_up_dgv(self):
+    def _set_up_dgv(self) -> None:
         # Style and add a DGV to the Form
 
         # Basic settings
@@ -71,13 +81,11 @@ class CenterGeometriesForm(Form):
         self._dgv.RowHeadersVisible = False
         self._dgv.AllowUserToAddRows = False
         self._dgv.AllowUserToDeleteRows = False
-        #self._dgv.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.DisplayedCells
 
         # Column settings
         self._dgv.AllowUserToOrderColumns = False
         self._dgv.AllowUserToResizeColumns = False
         self._dgv.AutoGenerateColumns = False
-        #self._dgv.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.DisplayedCells
         self._dgv.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.Single
         self._dgv.ColumnHeadersDefaultCellStyle.Font = Font(self._dgv.ColumnHeadersDefaultCellStyle.Font, FontStyle.Bold)
         self._dgv.ColumnHeadersDefaultCellStyle.SelectionBackColor = self._dgv.ColumnHeadersDefaultCellStyle.BackColor
@@ -93,12 +101,11 @@ class CenterGeometriesForm(Form):
         self._dgv.CellContentClick += self._dgv_CellContentClick
         self._dgv.CellValueChanged += self._dgv_CellValueChanged
 
-    def _populate_dgv(self):
-        # Adds the four columns to the table: "ROI Geometry", "X", "Y", and "Z"
+    def _populate_dgv(self) -> None:
+        # Adds the four columns to the table: "ROI Geometry", "R-L", "A-P", and "I-S", and populates rows
 
         # "ROI Geometry" column
         col = DataGridViewTextBoxColumn()
-        #col.AutoSizeMode = DataGridViewAutoSizeColumnMode.AllCells
         col.HeaderText = 'ROI Geometry'
         col.ReadOnly = True  # User cannot change values
         col.Height = 25
@@ -111,26 +118,34 @@ class CenterGeometriesForm(Form):
             col.HeaderText = dim
             col.Height = col.Width = 30
             self._dgv.Columns.Add(col)
+
+        # Add a row for each ROI
+        # By default, no checkboaxes are checked
         for roi_name, vals in self.center_info.items():
             self._dgv.Rows.Add([roi_name] + vals)
 
-        # Resize table to contents
-        #autosize_dgv(self._dgv)
+        # Resize table
         self._dgv.Width = 240
         self._dgv.Height = 25 * len(self.center_info)
+        
         self._y += self._dgv.Height + 15
 
-    def _set_up_ok_btn(self):
+    def _set_up_ok_btn(self) -> None:
+        # Styles and adds the "OK" button to the form
+
+        # Autosize to contents
         self._ok_btn.AutoSize = True
         self._ok_btn.AutoSizeMode = AutoSizeMode.GrowAndShrink
+
         self._ok_btn.Click += self._ok_btn_Click
-        self._ok_btn.Enabled = False
+        self._ok_btn.Enabled = False  # By default, no checkboxes are checked, so "OK" button should not be clickable
         self._ok_btn.Location = Point(15, self._y)
         self._ok_btn.Text = 'OK'
+
         self.Controls.Add(self._ok_btn)
 
 
-def exam_ctr(exam):
+def exam_ctr(exam: PyScriptObject) -> Dict[str, float]:
     exam_min, exam_max = exam.Series[0].ImageStack.GetBoundingBox()
     ctr = {}
     for dim, coord in exam_min.items():
