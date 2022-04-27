@@ -146,6 +146,16 @@ class CenterGeometriesForm(Form):
 
 
 def exam_ctr(exam: PyScriptObject) -> Dict[str, float]:
+    """Gets the center coordinates of an examination
+
+    Arguments
+    ---------
+    exam: The exam whose center coordinates to return
+
+    Returns
+    -------
+    A dictionary of the center coordinates of the exam, with keys "x", "y", and "z"
+    """
     exam_min, exam_max = exam.Series[0].ImageStack.GetBoundingBox()
     ctr = {}
     for dim, coord in exam_min.items():
@@ -154,6 +164,10 @@ def exam_ctr(exam: PyScriptObject) -> Dict[str, float]:
 
 
 def center_geometries() -> None:
+    """Centers ROI geometries in the R-L, A-P, and/or I-S directions on the current exam
+
+    The user chooses the ROIs and directions from a GUI
+    """
     try:
         case = get_current('Case')
     except:
@@ -168,7 +182,7 @@ def center_geometries() -> None:
     # Ensure there are unapproved, non-empty ROI geometries on the current exam
     struct_set = case.PatientModel.StructureSets[exam.Name]
     approved_roi_names = list(set(geom.OfRoi.Name for approved_ss in struct_set.ApprovedStructureSets for geom in approved_ss.ApprovedRoiStructures))
-    roi_names = sorted(geom.OfRoi.Name for geom in struct_set.RoiGeometries if geom.OfRoi.Name not in approved_roi_names and geom.HasContours())
+    roi_names = sorted([geom.OfRoi.Name for geom in struct_set.RoiGeometries if geom.OfRoi.Name not in approved_roi_names and geom.HasContours()], key = lambda x: x.lower())
     if not roi_names:
         MessageBox.Show('There are no non-empty, unapproved ROI geometries on the current exam. Click OK to abort the script.', 'No Non-Empty, Unapproved Geometries')
         sys.exit()
