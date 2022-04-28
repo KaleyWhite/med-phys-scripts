@@ -14,18 +14,52 @@ clr.AddReference('System.Windows.Forms')
 from System.Windows.Forms import MessageBox  # For displaying error messages
 
 
+# Absolute path to the directory where the temporary directory to hold the exported DICOm files will be created
 EXPORT_PATH_PARENT = os.path.join('T:', os.sep, 'Physics', 'Temp', 'copy_exam')
 
 
-def timestamp():
+def timestamp() -> str:
+    """Creates a timestamp of the current time, in the format MM-DD-YYYY HH_MM_SS
+
+    The format uses underscores instead of colons so that the timestamp can be part of a valid Windows filename
+
+    Returns
+    -------
+    The timestamp string
+
+    Example
+    -------
+    timestamp() -> "04-28-2022 12_11_00"
+    """
     dt = datetime.now()
     return dt.strftime('%M-%D-%YYYY %H_%M_%S')
 
 
-def compute_new_id(case, study_or_series):
-    # creates a unique DICOM StudyInstanceUID or SeriesInstanceUID for an examination
-    # `study_or_series`: either "Study" or "Series"
+def compute_new_id(case: PyScriptObject, study_or_series: str) -> str:
+    """Creates a unique DICOM StudyInstanceUID or SeriesInstanceUID for an examination
     
+    The new ID is based on the "maximum" ID across all exams in the case
+    This "maximum" is the largest integer value of an ID with the periods removed
+    The new ID is the same as the "maximum" except with the integer value of the last section (after the last period) incremented by 1
+
+    Arguments
+    ---------
+    case: The case containing the exam to generate a new ID for
+    study_or_series: The type of ID to generate
+                     Must be either 'Study' or 'Series'
+
+    Returns
+    -------
+    The new, unique ID
+
+    Example
+    -------
+    Assuming that some_case has two exams with study IDs "1.4.2.9", "1.5.3.1", respectively:
+    "Maximum" ID = max(1429, 1531) = 1531
+    New ID = "1.5.3." + (1 + 1) = "1.5.3.2"
+
+    compute_new_id(some_case, 'Study') -> "1.2.3.4"
+    """
     # IDs of all exams in the case
     all_ids = [e.GetAcquisitionDataFromDicom()[study_or_series + 'Module'][study_or_series + 'InstanceUID'] for e in case.Examinations]
     all_ids.sort(key=lambda id_: int(id_.split('.')[-1]))
@@ -45,17 +79,47 @@ def compute_new_id(case, study_or_series):
     return new_id
 
 
-def name_exam(case, exam_name):
-    regex = re.escape(exam_name) + r'\(([1-9]\d*)\)'
-    copy_num = 0
+def name_exam(case, exam, exam_name):
+    """Generates an exam name unique among all exams in the case
+
+    Name is made unique with a copy number in parentheses
+    Name comparison is case insensitive
+
+    Arguments
+    ---------
+    case: The case containing the exam to generate a name for
+    exam: The exam to generate a name for
+    exam_name: The desired name of the new exam
+
+    Returns
+    -------
+    The desired new exam name, made unique
+
+    Example
+    -------
+    Assuming some_case contains exams "Exam A", "Exam A (2)", and "An exam", to name a some_exam "exam A":
+    name_exam(some_case, some_exam, "Exam A") -> "Exam A (3)"
+    """
+    regex = re.escape(exam_name) + r' \(([1-9]\d*)\)'  # Match the name plus a copy number
+    copy_num = 0  # Assume no copies
+    # Check all exam names in the case
     for e in case.Examinations:
-        m = re.match(regex, e.Name, re.IGNORECASE)
-        if m is not None:
-            m_copy_num = int(m.group(1))
-            copy_num = max(copy_num, m_copy_num)
+        # Ignore the exam itself
+        if e.Equals(exam):
+            continue
+        # Exact name match, without a copy number
+        if e.Name.lower() == exam_name.lower():
+            copy_num = 1
+        else:
+            m = re.match(regex, e.Name, re.IGNORECASE)  # Case insensitive
+            if m is not None:  # Names match, with a copy number
+                m_copy_num = int(m.group(1)) + 1  # The copy number in the matched name, plus 1
+                copy_num = max(copy_num, m_copy_num)
+    # No matches found -> no copy number necessary to make the name unique
     if copy_num == 0:
         return exam_name
-    return exam_name + ' (' + str(copy_num + 1) + ')'
+    # Add copy number
+    return exam_name + ' (' + str(copy_num) + ')'
 
 
 def copy_exam():
@@ -65,6 +129,8 @@ def copy_exam():
 
     New exam name is old exam name plus " - Copy", made unique with a copy number (e.g., "Breast 1/1/21 - Copy (1)")
     New exam has a new study UID and series ID
+
+    Also copies level/window presets
     """
     try:
         patient = get_current('Patient')
@@ -128,7 +194,7 @@ def copy_exam():
     
     # Rename new exam
     new_exam_name = old_exam.Name + ' - Copy'
-    new_exam.Name = name_exam(case, new_exam_name)
+    new_exam.Name = name_exam(case, new_exam, new_exam_name)
     
     new_struct_set = case.PatientModel.StructureSets[new_exam.Name]
 
@@ -148,7 +214,7 @@ def copy_exam():
     # - Empty geometries
     # - Underived geometries (obviously)
     # - Dirty derived ROI geometries - these are not updated on old exam
-    for geom in new_struct_set.RoiGeometries:
+    for geom in old_struct_set.RoiGeometries:
         roi = case.PatientModel.RegionsOfInterest[geom.OfRoi.Name]
         if geom.HasContours() and geom.OfRoi.DerivedRoiExpression is not None and geom.PrimaryShape.DerivedRoiStatus is not None and not geom.PrimaryShape.DerivedRoiStatus.IsShapeDirty:
             roi.UpdateDerivedGeometry(Examination=new_exam)
@@ -158,6 +224,9 @@ def copy_exam():
     for i, poi in enumerate(old_struct_set.PoiGeometries):
         if poi.Point is not None and abs(poi.Point.x) < 1000:
             new_struct_set.PoiGeometries[i].Point = poi.Point
+
+    # Copy level/window presets
+    new_exam.Series[0].LevelWindow = old_exam.Series[0].LevelWindow
 
     # Delete the temporary directory and all its contents
     shutil.rmtree(export_path)
