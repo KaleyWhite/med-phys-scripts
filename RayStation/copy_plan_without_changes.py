@@ -40,7 +40,7 @@ def copy_plan_without_changes():
     try:
         plan = get_current('Plan')
     except:
-        MessageBox.Show('There is no plan lopen. Click OK to abort the script.', 'No Plan Open')
+        MessageBox.Show('There is no plan open. Click OK to abort the script.', 'No Plan Open')
         sys.exit()
 
     # Copy plan
