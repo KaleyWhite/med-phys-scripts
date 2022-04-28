@@ -1,21 +1,15 @@
 import clr
+import re
 import sys
+
+from connect import *
 
 clr.AddReference('System.Windows.Forms')
 from System.Windows.Forms import DialogResult, MessageBox, MessageBoxButtons
 
 sys.path.append(r'T:\Physics\KW\med-phys-scripts\RayStation')
+from copy_opt_stuff import copy_objectives_and_constraints, copy_opt_params
 from copy_plan_without_changes import copy_plan_without_changes
-
-
-def is_vmat(beam_set):
-    """Returns whether or not the beam set is VMAT
-
-    Arguments
-    ---------
-    beam_set: The beam set to check whether it is VMAT
-    """
-    return beam_set.Modality == 'Photons' and beam_set.PlanGenerationTechnique == 'Imrt' and beam_set.DeliveryTechnique == 'DynamicArc'
 
 
 def is_sabr(beam_set):
@@ -27,8 +21,6 @@ def is_sabr(beam_set):
     ---------
     beam_set: The beam set to check whether it is SABR
     """
-    if not is_vmat(beam_set):
-        return False
     fx = rx_val = None
     rx = beam_set.Prescription
     if rx is None:
@@ -42,6 +34,31 @@ def is_sabr(beam_set):
     fx = fx.NumberOfFractions
     rx = rx.DoseValue
     return fx <= 15 and rx / fx >= 600
+
+
+def get_tx_technique(bs):
+    # Helper function that returns the treatment technique for the given beam set.
+    # SMLC, VMAT, DMLC, 3D-CRT, conformal arc, or applicator and cutout
+    # Return '?' if treatment technique cannot be determined
+    # Code modified from RS support
+
+    if bs.Modality == 'Photons':
+        if bs.PlanGenerationTechnique == 'Imrt':
+            if bs.DeliveryTechnique == 'SMLC':
+                return 'SMLC'
+            if bs.DeliveryTechnique == 'DynamicArc':
+                return 'VMAT'
+            if bs.DeliveryTechnique == 'DMLC':
+                return 'DMLC'
+        elif bs.PlanGenerationTechnique == 'Conformal':
+            if bs.DeliveryTechnique == 'SMLC':
+                # return 'SMLC' # Changed from 'Conformal'. Failing with forward plans.
+                return 'Conformal'
+                # return '3D-CRT'
+            if bs.DeliveryTechnique == 'Arc':
+                return 'Conformal Arc'
+    elif bs.Modality == 'Electrons' and bs.PlanGenerationTechnique == 'Conformal' and bs.DeliveryTechnique == 'SMLC':
+        return 'ApplicatorAndCutout'
 
 
 def get_unique_beam_num(patient):
@@ -62,70 +79,31 @@ def get_unique_beam_num(patient):
     return beam_num + 1
 
 
-def split_name(name):
-    m = re.search(r'(.+) \((\d+)\)$', name)
-    if m is not None:
-        trunc_name = m.group(1)
-        copy_num = int(m.group(2))
-    else:
-        trunc_name = name
-        copy_num = 0
-    return trunc_name, copy_num
-
-
-def get_unique_beam_name(patient, old_beam):
-    """Returns a beam name unique among all beams in the current patient
-
-    Works like RayStation's PatientModel.GetUniqueRoiName
-
-    Arguments
-    ---------
-    patient: The patient whose beam names to check
-    old_beam: The beam with the desired name
-    """
-    beam_name = old_beam.Name
+def unique_name(desired_name, existing_names, max_len=sys.maxsize):
+    new_name = desired_name[:max_len]
     copy_num = 0
+    while new_name in existing_names:
+        copy_num += 1
+        copy_str = ' (' + str(copy_num) + ')'
+        name_len = 16 - len(copy_str)
+        new_name = desired_name[:name_len] + copy_str
+    return new_name
+
+
+def names_nums(patient):
+    beam_set_names, beam_names = [], []
+    beam_num = 1
     for case in patient.Cases:
         for plan in case.TreatmentPlans:
             for beam_set in plan.BeamSets:
+                beam_set_names.append(beam_set.DicomPlanLabel)
                 for beam in beam_set.Beams:
-                    if not beam.Equals(old_beam):
-                        name, num = split_name(beam.Name)
-                        if name == beam_name:
-                            copy_num = max(copy_num, num)
+                    beam_names.append(beam.Name)
+                    beam_num = max(beam_num, beam.Number + 1)
                 for setup_beam in beam_set.PatientSetup.SetupBeams:
-                    if not setup_beam.Equals(old_beam):
-                        name, num = split_name(setup_beam.Name)
-                        if name == beam_name:
-                            copy_num = max(copy_num, num)
-    if copy_num == 0:
-        return beam_name
-    return f'{beam_name} ({copy_num + 1})'
-
-
-def get_unique_beam_set_name(patient, beam_set_name):
-    """Returns a beam set name unique among all beams in the current patient
-
-    Works like RayStation's PatientModel.GetUniqueRoiName
-    The new beam set name is truncated to 16 characters. E.g., "Really Long Name (1)" -> "Really Long (1)"
-
-    Arguments
-    ---------
-    patient: The patient whose beam set names to check
-    beam_set_name: The desired new beam set name
-    """
-    copy_num = 0
-    for case in patient.Cases:
-        for plan in case.TreatmentPlans:
-            for beam_set in plan.BeamSets:
-                name, num = split_name(beam_set.DicomPlanLabel)
-                if beam_set_name.startswith(name):
-                    copy_num = max(copy_num, num)
-    if copy_num == 0:
-        return beam_set_name
-    copy_num_str = f' ({copy_num + 1})'
-    beam_set_name = beam_set_name[:(16 - len(copy_num_str))].strip()
-    return beam_set_name + copy_num_str
+                    beam_names.append(setup_beam.Name)
+                    beam_num = max(beam_num, setup_beam.Number + 1)
+    return beam_set_names, beam_names, beam_num
 
 
 def copy_beam_set():
@@ -154,12 +132,11 @@ def copy_beam_set():
 
     Code is modified from RS support's CopyBeamSet script
     """
-
     # Get current variables
     try:
         patient = get_current('Patient')
     except:
-        MessageBox.Show('There is no patient open. Click OK to abort the script.', 'No Open Patient')
+        MessageBox.Show('No patient is open. Click OK to abort the script.', 'No Open Patient')
         sys.exit()
     try:
         plan = get_current('Plan')
@@ -200,12 +177,20 @@ def copy_beam_set():
             machine_name = 'ELEKTA'
         warnings += 'Machine "' + old_beam_set.MachineReference.MachineName + '" is not commissioned, so new beam set uses machine "' + machine_name + '".'
 
-    planning_exam = plan.GetPlanningExamination()
+    planning_exam = plan.GetTotalDoseStructureSet().OnExamination
+    
+    tx_technique = get_tx_technique(old_beam_set)
+    if tx_technique is None:
+        MessageBox.Show('Treatment technique could not be determined. Click OK to abort the script.', 'Unrecognized Treatment Technique')
+        sys.exit()
+
+    # Existing names so new names can be made unique
+    existing_beam_set_names, existing_beam_names, beam_num = names_nums(patient)
 
     # Get unique beam set name
-    new_beam_set_name = get_unique_beam_set_name(patient, old_beam_set.DicomPlanLabel)
+    new_beam_set_name = unique_name(old_beam_set.DicomPlanLabel, existing_beam_set_names)
     new_beam_set = plan.AddNewBeamSet(Name=new_beam_set_name, ExaminationName=planning_exam.Name, MachineName=machine_name, Modality=old_beam_set.Modality, TreatmentTechnique=tx_technique, PatientPosition=old_beam_set.PatientPosition, NumberOfFractions=old_beam_set.FractionationPattern.NumberOfFractions, CreateSetupBeams=old_beam_set.PatientSetup.UseSetupBeams, Comment='Copy of "' + old_beam_set.DicomPlanLabel + '"')
-    beam_num = get_unique_beam_num(patient)
+    existing_beam_set_names.append(new_beam_set_name)
 
     # Copy the beams
     if not imported:  # Super simple for non-imported doses!
@@ -214,7 +199,8 @@ def copy_beam_set():
         # Rename and -number the new beams
         for beam in new_beam_set.Beams:
             beam.Number = beam_num
-            beam.Name = get_unique_beam_name(patient, beam)
+            beam.Name = unique_name(beam.Name, existing_beam_names)
+            existing_beam_names.append(beam.Name)
             beam_num += 1
     else:  # CopyBeamsFromBeamSet does not work w/ imported dose
         for i, old_beam in enumerate(old_beam_set.Beams):
@@ -222,18 +208,23 @@ def copy_beam_set():
             iso_data['Name'] = iso_data['NameOfIsocenterToRef'] = beam.Isocenter.Annotation.Name
             
             qual = old_beam.BeamQualityId
-            name = get_unique_beam_name(patient, old_beam)
+            name = unique_name(old_beam.Name, existing_beam_names)
 
             if old_beam_set.Modality == 'Electrons':
                 new_beam = new_beam_set.CreateElectronBeam(BeamQualityId=qual, Name=name, GantryAngle=old_beam.GantryAngle, CouchAngle=old_beam.CouchAngle, ApplicatorName=old_beam.Applicator.ElectronApplicatorName, InsertName=old_beam.Applicator.Insert.Name, IsAddCutoutChecked=True, IsocenterData=iso_data)
+                existing_beam_names.append(name)
                 new_beam.Applicator.Insert.Contour = old_beam.Applicator.Insert.Contour
                 new_beam.BeamMU = old_beam.BeamMU
                 new_beam.Description = old_beam.Description
 
-            elif not is_vmat(old_beam_set):
+            elif tx_technique != 'VMAT':
+                existing_beam_names.append(name)
                 # Create new beam for each segment
+                seg_beam_names = []
                 for s in old_beam.Segments:
-                    new_beam = new_beam_set.CreatePhotonBeam(Energy=qual, Name=name, GantryAngle=old_beam.GantryAngle, CouchAngle=old_beam.CouchAngle, CollimatorAngle=s.CollimatorAngle, IsocenterData=iso_data)  
+                    seg_beam_name = unique_name(name, existing_beam_names + seg_beam_names)
+                    new_beam = new_beam_set.CreatePhotonBeam(Energy=qual, Name=seg_beam_name, GantryAngle=old_beam.GantryAngle, CouchAngle=old_beam.CouchAngle, CollimatorAngle=s.CollimatorAngle, IsocenterData=iso_data)  
+                    seg_beam_names.append(seg_beam_name)
                     new_beam.BeamMU = round(old_beam.BeamMU * s.RelativeWeight, 2)
                     new_beam.CreateRectangularField()
                     new_beam.Segments[0].JawPositions = s.JawPositions
@@ -245,6 +236,7 @@ def copy_beam_set():
             
             else:  # VMAT
                 new_beam = new_beam_set.CreateArcBeam(ArcStopGantryAngle=old_beam.ArcStopGantryAngle, ArcRotationDirection=old_beam.ArcRotationDirection, BeamQualityId=qual, Name=name, GantryAngle=beam.GantryAngle, CouchRotationAngle=beam.CouchRotationAngle, CollimatorAngle=beam.InitialCollimatorAngle, IsocenterData=iso_data)
+                existing_beam_names.append(name)
                 new_beam.BeamMU = old_beam.BeamMU
                 new_beam.Description = old_beam.Description
             
@@ -260,7 +252,7 @@ def copy_beam_set():
         for i, old_setup_beam in enumerate(old_setup_beams):
             new_setup_beam = new_beam_set.PatientSetup.SetupBeams[i]
             new_setup_beam.Number = beam_num
-            new_setup_beam.Name = unique_name(old_setup_beam.Name)
+            new_setup_beam.Name = unique_name(old_setup_beam.Name, existing_beam_names)
             new_setup_beam.Description = old_setup_beam.Description
             beam_num += 1
     
