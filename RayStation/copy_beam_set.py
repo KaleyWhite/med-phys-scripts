@@ -1,8 +1,10 @@
 import clr
 import re
 import sys
+from typing import List, Optional, Tuple
 
 from connect import *
+from connect.connect_cpython import PyScriptObject  # For type hints
 
 clr.AddReference('System.Windows.Forms')
 from System.Windows.Forms import DialogResult, MessageBox, MessageBoxButtons
@@ -12,14 +14,15 @@ from copy_opt_stuff import copy_objectives_and_constraints, copy_opt_params
 from copy_plan_without_changes import copy_plan_without_changes
 
 
-def is_sabr(beam_set):
-    """Returns whether or not a beam set is SABR.
+def is_sabr(beam_set: PyScriptObject) -> bool:
+    """Returns whether or not a VMAT beam set is SABR.
 
     SABR includes SBRT, SRT, and SRS. A SABR beam set is a VMAT beam set with no more than 15 fractions and at least 600 cGy fractional dose.
 
     Arguments
     ---------
     beam_set: The beam set to check whether it is SABR
+              Assumes that the beam set is VMAT!
     """
     fx = rx_val = None
     rx = beam_set.Prescription
@@ -36,61 +39,81 @@ def is_sabr(beam_set):
     return fx <= 15 and rx / fx >= 600
 
 
-def get_tx_technique(bs):
-    # Helper function that returns the treatment technique for the given beam set.
-    # SMLC, VMAT, DMLC, 3D-CRT, conformal arc, or applicator and cutout
-    # Return '?' if treatment technique cannot be determined
-    # Code modified from RS support
+def get_tx_technique(beam_set: PyScriptObject) -> Optional[str]:
+    """Determine the treatment technique of the beam set
 
-    if bs.Modality == 'Photons':
-        if bs.PlanGenerationTechnique == 'Imrt':
-            if bs.DeliveryTechnique == 'SMLC':
+    Code modified from RS support
+    
+    Arguments
+    ---------
+    beam_set: The beam set whose treatment technique to return
+
+    Returns
+    -------
+    The treatment technique ("SMLC", "VMAT", "DMLC", "Conformal", "Conformal Arc", or "ApplicatorAndCutout"), or None if the treatment technique could not be determined
+    """
+
+    if beam_set.Modality == 'Photons':
+        if beam_set.PlanGenerationTechnique == 'Imrt':
+            if beam_set.DeliveryTechnique == 'SMLC':
                 return 'SMLC'
-            if bs.DeliveryTechnique == 'DynamicArc':
+            if beam_set.DeliveryTechnique == 'DynamicArc':
                 return 'VMAT'
-            if bs.DeliveryTechnique == 'DMLC':
+            if beam_set.DeliveryTechnique == 'DMLC':
                 return 'DMLC'
-        elif bs.PlanGenerationTechnique == 'Conformal':
-            if bs.DeliveryTechnique == 'SMLC':
+        elif beam_set.PlanGenerationTechnique == 'Conformal':
+            if beam_set.DeliveryTechnique == 'SMLC':
                 # return 'SMLC' # Changed from 'Conformal'. Failing with forward plans.
                 return 'Conformal'
                 # return '3D-CRT'
-            if bs.DeliveryTechnique == 'Arc':
+            if beam_set.DeliveryTechnique == 'Arc':
                 return 'Conformal Arc'
-    elif bs.Modality == 'Electrons' and bs.PlanGenerationTechnique == 'Conformal' and bs.DeliveryTechnique == 'SMLC':
+    elif beam_set.Modality == 'Electrons' and beam_set.PlanGenerationTechnique == 'Conformal' and beam_set.DeliveryTechnique == 'SMLC':
         return 'ApplicatorAndCutout'
 
 
-def get_unique_beam_num(patient):
-    """Returns a unique beam number among all beams in the current patient
+def unique_name(desired_name: str, existing_names: List[str]) -> str:
+    """Makes the desired name unique among all names in the list
+
+    Name is made unique with a copy number in parentheses
+    New name is truncated to be at most 16 charcaters long
 
     Arguments
     ---------
-    patient: The patient whose beam numbers to check
+    desired_name: The new name to make unique
+    existing_names: List of names among which the new name must be unique
+
+    Returns
+    -------
+    The new name, made unique
+
+    Example
+    -------
+    unique_name('1234567890abcdef', ['hello']) -> '1234567890abcdef'
+    unique_name('1234567890abcdef', ['1234567890ab (1)']) -> '1234567890ab (2)'
     """
-    beam_num = 1
-    for case in patient.Cases:
-        for plan in case.TreatmentPlans:
-            for beam_set in plan.BeamSets:
-                for beam in beam_set.Beams:
-                    beam_num = max(beam_num, beam.Number)
-                for setup_beam in beam_set.PatientSetup.SetupBeams:
-                    beam_num = max(beam_num, setup_beam.Number)
-    return beam_num + 1
-
-
-def unique_name(desired_name, existing_names, max_len=sys.maxsize):
-    new_name = desired_name[:max_len]
-    copy_num = 0
+    new_name = desired_name[:16]  # Truncate to at most 16 characters
+    copy_num = 0  # Assume no copies
+    # Increment the copy number until it makes the name unique
     while new_name in existing_names:
         copy_num += 1
-        copy_str = ' (' + str(copy_num) + ')'
-        name_len = 16 - len(copy_str)
+        copy_str = ' (' + str(copy_num) + ')'  # Suffix to add the name to make it unique
+        name_len = 16 - len(copy_str)  # Number of characters allowed before the suffix
         new_name = desired_name[:name_len] + copy_str
     return new_name
 
 
-def names_nums(patient):
+def names_nums(patient: PyScriptObject) -> Tuple[List[str], List[str], int]:
+    """Returns a list of beam set names, a list of beam names (including setup beams), and the next consecutive unique beam number in the patient
+
+    Arguments
+    ---------
+    patient: The patient containing the beam sets
+
+    Example
+    -------
+    names_nums(some_patient) -> (['Beam set 1', 'Another beam set'], ['1', '2', 'SB_1', 'SB_2', 'AP', Rt Lat'], 3)
+    """
     beam_set_names, beam_names = [], []
     beam_num = 1
     for case in patient.Cases:
@@ -106,28 +129,17 @@ def names_nums(patient):
     return beam_set_names, beam_names, beam_num
 
 
-def copy_beam_set():
+def copy_beam_set() -> None:
     """Copies the current beam set to a new beam set in the same plan
     
     Copy electron or photon (including VMAT) beam sets:
         - Treatment and setup beams
             * Unique beam numbers across all cases in current patient
-            * Beam names are same as numbers
-        - AutoScaleToPrescription
-        - For VMAT beam sets, other select optimization settings:
-            * Maximum number of iterations
-            * Optimality tolerance
-            * Calculate intermediate and final doses
-            * Iterations in preparation phase
-            * Max leaf travel distance per degree (and enabled/disabled)
-            * Dual arcs
-            * Max gantry spacing
-            * Max delivery time
-            * Objectives and constraints
+            * Beam names are same as old, made unique with a copy number
+        - Select optimization settings
         - Prescriptions
 
     Unfortunately, dose cannot accurately be copied for VMAT, so we do the next-best thing and provide the dose on additional set if the beam set is copied to a plan with a different planning exam.
-
     Does not optimize or compute dose
 
     Code is modified from RS support's CopyBeamSet script
