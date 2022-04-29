@@ -1,5 +1,6 @@
 import os
 import shutil
+import re
 import sys
 from typing import List
 
@@ -17,34 +18,35 @@ COLORWASH_TEMPLATE = 'CRMC Standard Dose Colorwash'
 EXPORT_PATH = os.path.join('T:', os.sep, 'Physics', 'QA & Procedures', 'Delta4', 'DQA Plans')
 
 
-def unique_name(desired_name: str, existing_names: List[str]) -> str:
-    '''Makes the desired name unique among all names in the list
+def unique_qa_plan_name(plan: PyScriptObject) -> str:
+    """Creates a DQA plan name unique in the plan
 
+    Name is based on the plan name with " DQA" appended
     Name is made unique with a copy number in parentheses
-    New name is truncated to be at most 16 charcaters long
+    New name is truncated to be at most 16 characters long
 
     Arguments
     ---------
-    desired_name: The new name to make unique
-    existing_names: List of names among which the new name must be unique
+    eplan: The plan to create the DQA plan name for
 
     Returns
     -------
-    The new name, made unique
+    The new DQA plan name, made unique
 
     Example
     -------
-    unique_name('1234567890abcdef', ['hello']) -> '1234567890abcdef'
-    unique_name('1234567890abcdef', ['1234567890ab (1)']) -> '1234567890ab (2)'
-    '''
-    new_name = desired_name[:16]  # Truncate to at most 16 characters
+    Assuming some_plan named "SBRT Lung_L" has DQA plans "SBRT Lung_L DQA" and "SBRT Lun DQA (1)":
+    unique_qa_plan_name(some_plan) -> "SBRT Lun DQA (1)"
+    """
+    new_name = plan.Name[:12] + ' DQA'  # Truncate to at most 16 characters, and " DQA" suffix is 4 characters
+    existing_names = [qa_plan.BeamSet.DicomPlanLabel for qa_plan in plan.VerificationPlans]
     copy_num = 0  # Assume no copies
     # Increment the copy number until it makes the name unique
     while new_name in existing_names:
         copy_num += 1
-        copy_str = ' (' + str(copy_num) + ')'  # Suffix to add the name to make it unique
-        name_len = 16 - len(copy_str)  # Number of characters allowed before the suffix
-        new_name = desired_name[:name_len] + copy_str
+        copy_str = ' (' + str(copy_num) + ')'  # Copy suffix to add the name to make it unique
+        name_len = 12 - len(copy_str)  # Number of characters allowed before the " DQA" and copy suffixes
+        new_name = plan.Name[:name_len] + ' DQA' + copy_str
     return new_name
 
 
@@ -72,7 +74,7 @@ def format_pt_name(pt: PyScriptObject) -> str:
 
 
 def create_qa_plan() -> None:
-    """Creates and exports a DQA plan for the current beam set
+    """Creates and exports a DQA plan for the current photon beam set
     
     If export folder with the computed name already exists, delete and recreate it
 
@@ -104,10 +106,13 @@ def create_qa_plan() -> None:
         sys.exit()
     patient_db = get_current('PatientDB')
 
+    # Ensure beam set modality is photons
+    if beam_set.Modality != 'Photons':
+        MessageBox.Show('This is not a photon beam set. Click OK to abort the script.', 'Unsupported Modality')
+        sys.exit()
+
     # Get unique DQA plan name while limiting to 16 characters
-    qa_plan_names = [qa_plan.BeamSet.DicomPlanLabel for qa_plan in plan.VerificationPlans]
-    qa_plan_name = plan.Name + ' DQA'
-    qa_plan_name = unique_name(qa_plan_name, qa_plan_names)
+    qa_plan_name = unique_qa_plan_name(plan)
 
     # Create QA plan
     iso = {'x': 21.93, 'y': 21.93, 'z': 0}  # DICOM coordinates of 'center' POI of Delta4 phantom. Wish we could get this directly from RayPhysics
