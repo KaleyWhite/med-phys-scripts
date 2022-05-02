@@ -361,11 +361,6 @@ def scale_clinical_goals() -> None:
     except:
         MessageBox.Show('There is no plan open. Click OK to abort the script.', 'No Open Plan')
         sys.exit()
-    try:
-        beam_set = get_current('BeamSet')
-    except:
-        MessageBox.Show('There are no beam sets in the open plan. Click OK to abort the script.', 'No Beam Sets')
-        sys.exit()
 
     # If plan is approved, offer to change objectives/constraints on a copy
     if plan.Review is not None and plan.Review.ApprovalStatus == 'Approved':
@@ -389,9 +384,13 @@ def scale_clinical_goals() -> None:
     example_goal_dose = getattr(scalable_goals[0].PlanningGoal, goal_attr_to_scale(scalable_goals[0]))
 
     # Get default dose to scale to
-    rx = beam_set.Prescription.PrimaryPrescriptionDoseReference
-    if rx is not None:
-        rx = int(rx.DoseValue)  # Rx can't be fractional, so this is not truncating
+    try:
+        rx = beam_set.Prescription.PrimaryPrescriptionDoseReference
+        beam_set = get_current('BeamSet')
+        if rx is not None:
+            rx = int(rx.DoseValue)  # Rx can't be fractional, so this is not truncating
+    except:
+        rx = None
 
     # Get scale factor from user input in a GUI
     form = ScaleClinicalGoalsForm(example_goal_txt, example_goal_dose, rx)
