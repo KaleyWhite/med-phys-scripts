@@ -17,26 +17,23 @@ sys.path.append(r'T:\Physics\KW\med-phys-scripts\RayStation')
 from copy_plan_without_changes import copy_plan_without_changes
 
 
-class ClinicalGoal(object):
-    def __init__(self, goal, goal_txt, dose_attr_name)
-
-
 class ScaleClinicalGoalsForm(Form):
-    """Class that allows the user to choose a reference dose and dose to scale to, for scaling objectives and constraints
+    """Class that allows the user to choose a reference dose and dose to scale to, for scaling clinical goals
 
-    When both doses are valid, the scale factor is provided along with a preview of how an objective/constraint will be scaled
+    When both doses are valid, the scale factor is provided along with a preview of how a goal will be scaled
     """
-    def __init__(self, objectives: List[PyScriptObject], constraints: List[PyScriptObject], rx: Optional[int] = None) -> None:
-        """Initializes a ScaleObjectivesConstraintsForm object
+    def __init__(self, example_txt: str, example_dose: int, rx: Optional[int] = None) -> None:
+        """Initializes a ScaleClinicalGoalsForm object
 
         Arguments
         ---------
-        objectives: List of objectives
-        constraints: List of constraints
-                     All constraints are assumed to be scalable (parameterized by dose)! These have a PctStdDeviation attribute
+        example_txt: Text of the example goal for the preview, with a double underscore to stand in for the dose
+        example_dose: The dose parameter of the example goal for the preview
         rx: The beam set's primary prescription
-            Used as the default reference dose
+            Used as the default dose to scale to
         """
+        self._dose = example_dose
+
         self._set_up_form()
 
         self._y = 15  # Vertical coordinate of next control
@@ -46,7 +43,7 @@ class ScaleClinicalGoalsForm(Form):
         self._set_up_ok_btn()
 
         # Script description/instructions
-        l = self._add_lbl('Scale objectives and constraints to a new dose value.')
+        l = self._add_lbl('Scale clinical goals to a new dose value.')
         self._y += l.Height + 10
 
         # Align textboxes by using uniform label width
@@ -54,12 +51,12 @@ class ScaleClinicalGoalsForm(Form):
 
         # Reference dose
         # Default value is current beam set Rx, if it is present
-        self._ref_dose_tb = self._add_dose_input('Reference dose:', rx)
+        self._ref_dose_tb = self._add_dose_input('Reference dose:')
         self._y += self._ref_dose_tb.Height
 
         # Dose to scale to
         # No default value
-        self._scale_dose_tb = self._add_dose_input('Dose to scale to:')
+        self._scale_dose_tb = self._add_dose_input('Dose to scale to:', rx)
         self._y += self._scale_dose_tb.Height
 
         # Scale factor
@@ -68,41 +65,14 @@ class ScaleClinicalGoalsForm(Form):
         self._scale_factor_lbl = self._add_lbl('?', x=self.txt_box_x)
         self._y += self._scale_factor_lbl.Height + 20
 
-        ## Preview
-        # Shows an example of scaling an objective/constraint
+        # Preview shows an example of scaling a goal
         l = self._add_lbl('Preview:', bold=True)
         self._y += l.Height
-        # If there are objective(s), use the first objective as the example
-        if objectives:
-            dfp = objectives.ConstituentFunctions[0].DoseFunctionParameters
-        # If no objectives, use the first constraint as the example
-        else:
-            dfp = constraints[0].DoseFunctionParameters
-        if not hasattr(dfp, 'FunctionType'):  # Dose falloff
-            string = f'Dose Fall-Off [H]__ cGy [L]__ cGy, Low dose distance {dfp.LowDoseDistance:.2f} cm'
-            self._doses = [int(dfp.HighDoseLevel), int(dfp.LowDoseLevel)]  # Current dose values in the example objective/constraint
-        else:
-            self._doses = [int(dfp.DoseLevel)]  # Current dose values in the example objective/constraint
-            if dfp.FunctionType == 'MinDose':
-                string = 'Min dose __ cGy'
-            elif dfp.FunctionType == 'MaxDose':
-                string = 'Max dose __ cGy'
-            elif dfp.FunctionType == 'MinDvh':
-                string = f'Min DVH __ cGy to {dfp.PercentVolume}% volume'
-            elif dfp.FunctionType == 'MaxDvh':
-                string = f'Max DVH __ cGy to {dfp.PercentVolume}% volume'
-            elif dfp.FunctionType == 'UniformDose':
-                string = 'Uniform dose __ cGy'
-            elif dfp.FunctionType == 'MinEud':
-                string = f'Min EUD __ cGy, Parameter A {dfp.EudParameterA:.0f}'
-            elif dfp.FunctionType == 'MaxEud':
-                string = f'Max EUD __ cGy, Parameter A {dfp.EudParameterA:.0f}'
-            else:  # UniformEud
-                string = f'Target EUD __ cGy, Parameter A {dfp.EudParameterA:.0f}'
-        self._add_preview_objective(string, self._doses)  # Labels containing current values for the example objective/constraint
+        dose_str = str(round(self._dose, 2)).rstrip('0').rstrip('.')
+        self._add_preview_objective(example_txt, dose_str)
         l = self._add_lbl('will be changed to', x=70)
         self._y += l.Height
-        self._dose_lbls = self._add_preview_objective(string, ['?'] * len(self._doses))  # Values for scaled example objective/constraint are '?' until a scale factor is computed
+        self._dose_lbl = self._add_preview_objective(example_txt, '?')  # Value for scaled example goal is "?" until a scale factor is computed
         
         self._set_up_ok_btn()
 
@@ -116,7 +86,7 @@ class ScaleClinicalGoalsForm(Form):
 
         self.FormBorderStyle = FormBorderStyle.FixedToolWindow  # User cannot resize form
         self.StartPosition = FormStartPosition.CenterScreen  # Start form in middle of screen
-        self.Text = 'Scale Objectives and Constraints'
+        self.Text = 'Scale Clinical Goals'
         self.MinimumSize = Size(TextRenderer.MeasureText(self.Text, SystemFonts.CaptionFont).Width + 100, 0)  # At least as wide as title plus room for "X" button, etc.
 
     def _set_up_ok_btn(self) -> None:
@@ -189,41 +159,42 @@ class ScaleClinicalGoalsForm(Form):
 
         return tb
 
-    def _add_preview_objective(self, string: str, doses: List[int]) -> List[Label]:
-        """Adds an example objective/constraint with the given dose values
+    def _add_preview_objective(self, string: str, dose: str) -> Label:
+        """Displays an example goal with the given dose values
         
         Dose values are bold
 
         Arguments
         ---------
-        string: Text to display, with "__" standing in for each dose value
-        doses: List of dose values to substitute for "__" in the string
+        string: Text to display, with "__" standing in for the dose value
+        dose: Dose values to substitute for "__" in the string
 
         Returns
         -------
-        A list of Labels displaying each dose text in `doses`
+        A Labels displaying the dose
 
         Example
         -------
-        self._add_preview_objective('Here's a dose: __. And another: __.', [5000, 6000]) -> [Label with bold text "5000", Label with bold text "6000"]
-        Displays "Here's a dose: 5000. And another: 6000." in the GUI and returns
+        self._add_preview_objective('Here's a dose: __.', 5000) -> Label with bold text "5000"
+        Displays "Here's a dose: 5000." in the GUI
         """
-        lbl_txts = string.split('__')  # E.g., 'Dose Fall-Off [H]__ cGy [L]__ cGy, Low dose distance 1.00 cm' -> ['Dose Fall-Off [H]', ' cGy [L]', ' cGy, Low dose distance 1.00 cm']
-        dose_lbls = []
+        lbl_txts = string.split('__')  # E.g., 'At most 0.25 cm^3 volume at __ cGy dose' -> ['At most 0.25 cm^3 volume at ', ' cGy dose']
+        
         x = 50  # Offset from left
-        for i, txt in enumerate(lbl_txts):
-            l = self._add_lbl(txt, x=x)
-            self.Controls.Add(l)
-            x += l.Width
-            # There is dose to display
-            if i != len(lbl_txts) - 1:
-                l_2 = self._add_lbl(str(doses[i]), bold=True, x=x)
-                l_2.Width = 45  # Wide enough for 6 digits
-                self.Controls.Add(l_2)
-                x += 45
-                dose_lbls.append(l_2)
+        l = self._add_lbl(lbl_txts[0], x=x)
+        self.Controls.Add(l)
+        x += l.Width
+
+        dose_l = self._add_lbl(dose, bold=True, x=x)
+        dose_l.Width = 45  # Wide enough for 6 digits
+        self.Controls.Add(dose_l)
+        x += 45
+
+        l = self._add_lbl(lbl_txts[1], x=x)
+        self.Controls.Add(l)
+
         self._y += l.Height
-        return dose_lbls
+        return dose_l
 
     # ------------------------------ Event handlers ------------------------------ #
 
@@ -280,14 +251,11 @@ class ScaleClinicalGoalsForm(Form):
             self._scale_factor_lbl.Text = display
             
             # Display rounded computed doses in preview
-            for i, dose_lbl in enumerate(self._dose_lbls):
-                dose_lbl.Text = f'{(self.scale_factor * self._doses[i]):.0f}'
+            self._dose_lbl.Text = f'{(self.scale_factor * self._dose):.0f}'
             self._ok.Enabled = True
         # Invalid dose value(s)
         else:
-            self._scale_factor_lbl.Text = '?'  # Can't compute scale factor
-            for dose_lbl in self._dose_lbls:  # Can't compute preview dose value(s)
-                dose_lbl.Text = '?'
+            self._scale_factor_lbl.Text = self._dose_lbl.Text = '?'  # Can't compute scale factor or preview dose value(s)
             self._ok.Enabled = False
 
     def _ok_Click(self, sender: Button, event: EventArgs) -> None:
@@ -295,32 +263,77 @@ class ScaleClinicalGoalsForm(Form):
         self.DialogResult = DialogResult.OK
 
 
-def fmt_num(num):
-    # Helper function to format a number for display
-    # If there are no digits after the decimal place, return an int. Otherwise, strip all zeroes from the end and display a maximum of 2 decimal places
+def goal_str(goal: PyScriptObject) -> str:
+    """Creates a string representation of the clinical goal
 
-    # If number is not zero but rounds to 0, or number is greater than 100000, format in scientific notation
-    if 0 < num < 0.005 or num > 100000:
-        num = "{:.2E}".format(num)
-        coef, power = num.split("E")
-        coef = coef.rstrip("0").rstrip(".")
-        if power.startswith("+"):
-            power = power[1:].lstrip("0")
-        else:
-            power = "-{}".format(power[1:].lstrip("0"))
-        if coef == "1":
-            return "10<sup>{}</sup>".format(power)
-        if coef == "-1":
-            return "-10<sup>{}</sup>".format(power)
-        return "{} &times; 10<sup>{}</sup>".format(coef, power)
-        
-    return str(round(num, 2)).rstrip("0").rstrip(".")
+    Attempts to mimic whatever RayStation does behind the scenes
+    Dose is replaced with double underscores
+
+    Arguments
+    ---------
+    goal: The goal to format as a string
+
+    Returns
+    -------
+    The goal string
+
+    Raises
+    ------
+    ValueError: If the dose type is not recognized
+
+    Example
+    -------
+    Given some_goal V2000cGy < 0.25cm^3:
+    goal_str(some_goal) -> "At most 0.25 cm^3 volume at 2000 cGy dose"
+    """
+    goal_type = goal.PlanningGoal.Type
+
+    goal_criteria = 'At least' if goal.PlanningGoal.GoalCriteria == 'AtLeast' else 'At most'
+    accept_lvl = goal.PlanningGoal.AcceptanceLevel
+    param_val = goal.PlanningGoal.ParameterValue
+
+    goal_txt = goal_criteria + ' '
+
+    if goal_type == 'DoseAtAbsoluteVolume':
+        goal_txt += '__ cGy dose at ' + str(param_val) + ' cm^3 volume'
+    elif goal_type == 'DoseAtVolume':
+        goal_txt += '__ cGy dose at ' + str(param_val * 100) + '% volume'
+    elif goal_type == 'AbsoluteVolumeAtDose':
+        goal_txt += str(accept_lvl) + ' cm^3 volume at __ cGy dose'
+    elif goal_type == 'VolumeAtDose':
+        goal_txt += str(accept_lvl * 100) + '% volume at __ cGy dose'
+    elif goal_type == 'AverageDose':
+        goal_txt += '__ cGy average dose'
+    elif goal_type == 'ConformityIndex':
+        goal_txt += 'a conformity index of ' + str(accept_lvl) + ' at __ cGy dose'
+    elif goal_type == 'DoseAtPoint':  # DoseAtPoint
+        goal_txt += '__ cGy dose at point'
+    else:
+        raise ValueError('Unrecognized goal type "' + goal_type + '"')
+
+    return goal_txt
 
 
-def goal_str(goal):
+def goal_attr_to_scale(goal: PyScriptObject) -> str:
+    """Determines the cname of the dose attribute of the goal
 
+    Arguments
+    ---------
+    goal: The goal whose attribute name to return
 
-def goal_attr_to_scale(goal):
+    Returns
+    -------
+    The name of the dose attribute. Either "AcceptanceLevel" or "ParameterValue"
+
+    Raises
+    ------
+    ValueError: If the dose type is not recognized or is "HomogeneityIndex"
+
+    Example
+    -------
+    Given some_goal V2000cGy < 0.25cm^3:
+    goal_attr_to_scale(some_goal) -> "ParameterValue"
+    """
     goal_type = goal.PlanningGoal.Type
     if goal_type in ['DoseAtAbsoluteVolume', 'DoseAtVolume', 'AverageDose', 'DoseAtPoint']:
         return 'AcceptanceLevel' 
@@ -330,46 +343,17 @@ def goal_attr_to_scale(goal):
         raise ValueError('Dose of type "HomogeneityIndex" is not parametrized by dose')
     else:
         raise ValueError('Unrecognized goal type "' + goal_type + '"')
-    goal_criteria = 'At least' if goal.PlanningGoal.GoalCriteria == 'AtLeast' else 'At most'
-    accept_lvl = goal.PlanningGoal.AcceptanceLevel
-    param_val = goal.PlanningGoal.ParameterValue
-
-    goal_txt = goal_criteria + ' '
-
-    if goal_type == 'DoseAtAbsoluteVolume':
-        goal_txt += '__ cGy dose at ' + str(param_val) + ' cm^3 volume'
-        dose_attr_name = 'AcceptanceLevel'
-    elif goal_type == 'DoseAtVolume':
-        goal_txt += '__ cGy dose at ' + str(param_val * 100) + '% volume'
-        dose_attr_name = 'AcceptanceLevel'
-    elif goal_type == 'AbsoluteVolumeAtDose':
-        goal_txt += str(accept_lvl) + ' cm^3 volume at __ cGy dose'
-        dose_attr_name = 'ParameterValue'
-    elif goal_type == 'VolumeAtDose':
-        goal_txt += str(accept_lvl * 100) + '% volume at __ cGy dose'
-        dose_attr_name = 'ParameterValue'
-    elif goal_type == 'AverageDose':
-        goal_txt += '__ cGy average dose'
-        dose_attr_name = 'AcceptanceLevel'
-    elif goal_type == 'ConformityIndex':
-        goal_txt += 'a conformity index of ' + str(accept_lvl) + ' at __ cGy dose'
-        dose_attr_name = 'ParameterValue'
-    elif goal_type == 'DoseAtPoint':  # DoseAtPoint
-        goal_txt += '__ cGy dose at point'
-        dose_attr_name = 'AcceptanceLevel'
-    else:
-        MessageBox.Show('Unrecognized goal type "' + goal_type + '". Click OK to abort the script.', 'Unrecognized Goal Type')
+    
 
 
-def scale_objectives_constraints() -> None:
-    """Scales the current beam set's objectives and constraints to a new dose value
+def scale_clinical_goals() -> None:
+    """Scales the current plan's clinical goals to a new dose value
 
-    (If there is only one beam set in the current plan, these objectives and constraints apply to the plan as a whole.)
-    Changes objectives and constraints in place: does not add objectives and constraints.
-    User supplies reference dose (default is Rx dose, if it is provided) and dose to scale to, in a GUI.
-    All doses in objectives and constraints are multiplied by a scale factor = dose to scale to / reference dose
+    Changes goals in place: does not add goals.
+    User supplies reference dose and dose to scale to (default is primary Rx dose for current beam set, if it is provided), in a GUI.
+    Each goal's dose (acceptance level or parameter value, depending on the goal type) are multiplied by a scale factor = dose to scale to / reference dose and rounded to the nearest integer
 
-    If current plan is approved, user may scale objectives/constraints in a copy
+    If current plan is approved, user may scale goals in a copy
     """
     # Get current variables
     try:
@@ -400,69 +384,24 @@ def scale_objectives_constraints() -> None:
         MessageBox.Show('All of the current plan\'s clinical goals are for the homogeneity index - not parameterized by dose. Click OK to abort the script.', 'No Clinical Goals')
         sys.exit()
 
-    example_goal_txt, example_goal_dose = parse_example_goal(scalable_goals[0])
-    example_goal_type = example_goal.PlanningGoal.Type
-        goal_criteria = 'At least' if goal.PlanningGoal.GoalCriteria == 'AtLeast' else 'At most'
-        accept_lvl = goal.PlanningGoal.AcceptanceLevel
-        param_val = goal.PlanningGoal.ParameterValue
+    # Get example goal for preview in GUI
+    example_goal_txt = goal_str(scalable_goals[0])
+    example_goal_dose = getattr(scalable_goals[0].PlanningGoal, goal_attr_to_scale(scalable_goals[0]))
 
-        goal_txt = goal_criteria + ' '
-
-        if goal_type == 'DoseAtAbsoluteVolume':
-            goal_txt += '__ cGy dose at ' + str(param_val) + ' cm^3 volume'
-            dose_attr_name = 'AcceptanceLevel'
-        elif goal_type == 'DoseAtVolume':
-            goal_txt += '__ cGy dose at ' + str(param_val * 100) + '% volume'
-            dose_attr_name = 'AcceptanceLevel'
-        elif goal_type == 'AbsoluteVolumeAtDose':
-            goal_txt += str(accept_lvl) + ' cm^3 volume at __ cGy dose'
-            dose_attr_name = 'ParameterValue'
-        elif goal_type == 'VolumeAtDose':
-            goal_txt += str(accept_lvl * 100) + '% volume at __ cGy dose'
-            dose_attr_name = 'ParameterValue'
-        elif goal_type == 'AverageDose':
-            goal_txt += '__ cGy average dose'
-            dose_attr_name = 'AcceptanceLevel'
-        elif goal_type == 'ConformityIndex':
-            goal_txt += 'a conformity index of ' + str(accept_lvl) + ' at __ cGy dose'
-            dose_attr_name = 'ParameterValue'
-        elif goal_type == 'HomogeneityIndex':  # HI
-            goal_txt += 'a homogeneity index of ' + str(accept_lvl) + ' at ' + str(param_val * 100) + '% volume'
-        elif goal_type == 'DoseAtPoint':  # DoseAtPoint
-            goal_txt += '__ cGy dose at point'
-            dose_attr_name = 'AcceptanceLevel'
-    
-    # Exit script if no objectives/constraints
-    if objectives is None:  # No objectives
-        if constraints.Count == 0:  # NO constraints, period
-            MessageBox.Show('There are no objectives or constraints for the current beam set. Click OK to abort the script.', 'No Objectives/Constraints')
-            sys.exit()
-        if not scalable_constraints:  # No constraints that scaling the dose would affect
-            MessageBox.Show('The current beam set has no objectives. All constraints are uniform dose constraints, which are not parameterized by dose. Click OK to abort the script.', 'No Objectives/Constraints')
-            sys.exit()
-
-    # Get default reference dose
+    # Get default dose to scale to
     rx = beam_set.Prescription.PrimaryPrescriptionDoseReference
     if rx is not None:
         rx = int(rx.DoseValue)  # Rx can't be fractional, so this is not truncating
 
     # Get scale factor from user input in a GUI
-    form = ScaleObjectivesConstraintsForm(objectives, scalable_constraints, rx)
+    form = ScaleClinicalGoalsForm(example_goal_txt, example_goal_dose, rx)
     form.ShowDialog()
     if form.DialogResult != DialogResult.OK:
         sys.exit()
     scale_factor = form.scale_factor
-    
-    # List of objectives and/or constraints
-    objectives_constraints = list(scalable_constraints)
-    if objectives is not None:
-        objectives_constraints.extend(list(objectives.ConstituentFunctions))
 
-    # Scale each objective or constraint
-    for o_c in objectives_constraints:
-        dfp = o_c.DoseFunctionParameters
-        for attr in dir(dfp):
-            # Multiply each dose parameter by the scale factor
-            if 'DoseLevel' in attr:
-                val = getattr(dfp, attr)
-                setattr(dfp, attr, val * scale_factor)
+    # Scale each goal
+    for goal in scalable_goals:
+        attr_name = goal_attr_to_scale(goal)
+        attr_val = getattr(goal.PlanningGoal, attr_name)
+        setattr(goal.PlanningGoal, attr_name, round(attr_val * scale_factor))
