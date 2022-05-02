@@ -385,8 +385,8 @@ def scale_clinical_goals() -> None:
 
     # Get default dose to scale to
     try:
-        rx = beam_set.Prescription.PrimaryPrescriptionDoseReference
         beam_set = get_current('BeamSet')
+        rx = beam_set.Prescription.PrimaryPrescriptionDoseReference
         if rx is not None:
             rx = int(rx.DoseValue)  # Rx can't be fractional, so this is not truncating
     except:
