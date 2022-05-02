@@ -195,7 +195,7 @@ class ScaleObjectivesConstraintsForm(Form):
         Example
         -------
         self._add_preview_objective('Here's a dose: __. And another: __.', [5000, 6000]) -> [Label with bold text "5000", Label with bold text "6000"]
-        Displays "Here's a dose: 5000. And another: 6000." in the GUI and returns
+        Displays "Here's a dose: 5000. And another: 6000." in the GUI
         """
         lbl_txts = string.split('__')  # E.g., 'Dose Fall-Off [H]__ cGy [L]__ cGy, Low dose distance 1.00 cm' -> ['Dose Fall-Off [H]', ' cGy [L]', ' cGy, Low dose distance 1.00 cm']
         dose_lbls = []
@@ -290,7 +290,7 @@ def scale_objectives_constraints() -> None:
     (If there is only one beam set in the current plan, these objectives and constraints apply to the plan as a whole.)
     Changes objectives and constraints in place: does not add objectives and constraints.
     User supplies reference dose (default is Rx dose, if it is provided) and dose to scale to, in a GUI.
-    All doses in objectives and constraints are multiplied by a scale factor = dose to scale to / reference dose
+    All doses in objectives and constraints are multiplied by a scale factor = dose to scale to / reference dose and rounded to the nearest integer
 
     If current plan is approved, user may scale objectives/constraints in a copy
     """
@@ -359,4 +359,4 @@ def scale_objectives_constraints() -> None:
             # Multiply each dose parameter by the scale factor
             if 'DoseLevel' in attr:
                 val = getattr(dfp, attr)
-                setattr(dfp, attr, val * scale_factor)
+                setattr(dfp, attr, round(val * scale_factor))
