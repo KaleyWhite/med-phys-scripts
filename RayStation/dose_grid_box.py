@@ -2,14 +2,16 @@ import clr
 import os
 import sys
 
-from connect import *
 import pandas as pd
+
+from connect import *
+from connect.connect_cpython import PyScriptObject  # For type hints
 
 clr.AddReference('System.Windows.Forms')
 from System.Windows.Forms import MessageBox  # For displaying errors
 
 
-# Absoluet path to the "TG-263 Nomenclature with CRMC Colors" spreadsheet
+# Absolute path to the "TG-263 Nomenclature with CRMC Colors" spreadsheet
 TG263_PATH = os.path.join('T:', os.sep, 'Physics', 'KW', 'med-phys-spreadsheets', 'TG-263 Nomenclature with CRMC Colors.xlsm')
 
 
@@ -34,8 +36,13 @@ def crmc_color(roi_name: str) -> str:
         return Color.Purple
 
 
-def dose_grid_box() -> None:
-    """Adds a box ROI with geometry that outlines the dose grid of the current beam set"""
+def dose_grid_box() -> PyScriptObject:
+    """Adds a box ROI with geometry that outlines the dose grid of the current beam set
+    
+    Returns
+    -------
+    The box ROI
+    """
 
     # Get current case
     try:
@@ -73,3 +80,5 @@ def dose_grid_box() -> None:
     box.CreateBoxGeometry(Size=box_sz, Examination=exam, Center=box_ctr, VoxelSize=dg.VoxelSize.x)
     if dose.DoseValues is not None:
         dose.UpdateDoseGridStructures()
+
+    return box
