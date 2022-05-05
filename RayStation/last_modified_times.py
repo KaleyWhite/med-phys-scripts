@@ -15,7 +15,7 @@ from System.Windows.Forms import MessageBox
 
 
 class LastModifiedTimes(object):
-    """Creates and opens a TXT file listing the last modified dates and times for objects that have this information:
+    """Class that creates and opens a TXT file listing the last modified dates and times for selected objects:
         - Patient
         - Registrations
         - Structure sets
@@ -120,6 +120,8 @@ class LastModifiedTimes(object):
         Info is written in the following format: "<label>: <datetime> by <username or name>"
         If the username is in the usernames DataFrame, the actual name is used instead of the username
 
+        If modification info is not available for the object, a message is written that the object needs saving
+
         Arguments
         ---------
         lbl: The "name" of the object whose modification info to write
@@ -143,7 +145,7 @@ class LastModifiedTimes(object):
         
         handle.write(lbl + ': ' + dt + ' by ' + user + '\n')
 
-    def _write_pt(self, handle):
+    def _write_pt(self, handle: PyScriptObject) -> None:
         """Writes patient modification info to a file
 
         Arguments
@@ -153,7 +155,7 @@ class LastModifiedTimes(object):
         self._write_mod_info('Patient', self._patient, handle)
         handle.write('\n')
 
-    def _write_registrations(self, handle):
+    def _write_registrations(self, handle: PyScriptObject) -> None:
         """Writes registration modification info to a file
 
         Arguments
@@ -170,7 +172,7 @@ class LastModifiedTimes(object):
             self._write_mod_info('Registration "' + r_name + '"', r, handle)
         handle.write('\n')
 
-    def _write_struct_sets(self, handle):
+    def _write_struct_sets(self, handle: PyScriptObject) -> None:
         """Writes structure set modification info to a file
 
         Arguments
@@ -186,7 +188,7 @@ class LastModifiedTimes(object):
             self._write_mod_info('Structure set on "' + struct_set.OnExamination.Name + '"', struct_set, handle)
         handle.write('\n')
 
-    def _write_beam_sets(self, handle):
+    def _write_beam_sets(self, handle: PyScriptObject) -> None:
         """Writes beam set modification info to a file
 
         Arguments
@@ -202,7 +204,7 @@ class LastModifiedTimes(object):
             self._write_mod_info('Beam set "' + beam_set.DicomPlanLabel + '"', beam_set, handle)
         handle.write('\n')
 
-    def _write_doses(self, handle):
+    def _write_doses(self, handle: PyScriptObject) -> None:
         """Writes plan, beam set, and beam dose modification info to a file
 
         Arguments
@@ -226,7 +228,7 @@ class LastModifiedTimes(object):
                 self._write_mod_info('Beam dose "' + beam.Name + '"', beam_set.FractionDose.BeamDoses[i], handle)
             handle.write('\n')
 
-    def _write_eval_doses(self, handle):
+    def _write_eval_doses(self, handle: PyScriptObject) -> None:
         """Writes evaluation dose modification info to a file
 
         Arguments
@@ -260,8 +262,8 @@ class LastModifiedTimes(object):
                     self._write_mod_info(dose_txt, de, handle)
                     handle.write('\n')
 
-    def _last_modified_times(self):
-        """Writes modification info for several objects"""
+    def _last_modified_times(self) -> None:
+        """Writes modification info for several objects to a file, and opens the file"""
         filepath = self._output_filepath()
         with open(filepath, 'w') as f:
             self._write_pt(f)
@@ -273,8 +275,20 @@ class LastModifiedTimes(object):
         os.system('"' + filepath + '"')
 
 
-def last_modified_times():
-    """Writes modification info to a file"""
+def last_modified_times() -> None:
+    """Creates and opens a file listing modification info for several RayStation objects:
+        - Patient (current)
+        - Registrations (in current case, if a case is open)
+        - Structure sets (in current case, if a case is open)
+        - Beam sets (in current plan, if a plan is open)
+        - Plan dose (for current plan, if a plan is open)
+            - Beam set dose (for beam sets in current plan, if a plan is open)
+                - Beam dose (for beams in current plan, if a plan is open)
+        - Evaluation doses (for current case, if a case is open)
+
+        If modification info is not available for an (open) object, a message is written that the object needs saving
+    """
+    # Get current objects to pass to LastModifiedTimes constructor
     try:
         patient = get_current('Patient')
     except:
@@ -283,11 +297,10 @@ def last_modified_times():
     try:
         case = get_current('Case')
     except:
-        MessageBox.Show('There is no case open. Click OK to abort the script.', 'No Open Case')
-        sys.exit()
+        case = None
     try:
         plan = get_current('Plan')
     except:
         plan = None
 
-    LastModifiedTimes(patient, case, plan)
+    LastModifiedTimes(patient, case, plan)  # Constructor calls "main" method that does the writing
