@@ -103,6 +103,17 @@ def unique_name(desired_name: str, existing_names: List[str]) -> str:
     return new_name
 
 
+def unique_iso_name(desired_name, beam_set, plan):
+    iso_names = []
+    for bs in plan.BeamSets:
+        if not bs.Equals(beam_set):
+            for beam in bs.Beams:
+                iso_name = beam.Isocenter.Annotation.Name
+                if iso_name not in iso_names:
+                    iso_names.append(iso_name)
+    return unique_name(desired_name, iso_names)
+
+
 def names_nums(patient: PyScriptObject) -> Tuple[List[str], List[str], int]:
     """Returns a list of beam set names, a list of beam names (including setup beams), and the next consecutive unique beam number in the patient
 
@@ -139,7 +150,7 @@ def copy_beam_set() -> None:
         - Select optimization settings
         - Prescriptions
 
-    Unfortunately, dose cannot accurately be copied for VMAT, so we do the next-best thing and provide the dose on additional set if the beam set is copied to a plan with a different planning exam.
+    Unfortunately, dose cannot accurately be copied for VMAT
     Does not optimize or compute dose
 
     Code is modified from RS support's CopyBeamSet script
@@ -216,8 +227,8 @@ def copy_beam_set() -> None:
             beam_num += 1
     else:  # CopyBeamsFromBeamSet does not work w/ imported dose
         for i, old_beam in enumerate(old_beam_set.Beams):
-            iso_data = beam_set.CreateDefaultIsocenterData(Position=beam.Isocenter.Position)
-            iso_data['Name'] = iso_data['NameOfIsocenterToRef'] = beam.Isocenter.Annotation.Name
+            iso_data = new_beam_set.CreateDefaultIsocenterData(Position=old_beam.Isocenter.Position)
+            iso_data['Name'] = iso_data['NameOfIsocenterToRef'] = unique_iso_name(old_beam.Isocenter.Annotation.Name, new_beam_set, plan)
             
             qual = old_beam.BeamQualityId
             name = unique_name(old_beam.Name, existing_beam_names)
@@ -235,7 +246,7 @@ def copy_beam_set() -> None:
                 seg_beam_names = []
                 for s in old_beam.Segments:
                     seg_beam_name = unique_name(name, existing_beam_names + seg_beam_names)
-                    new_beam = new_beam_set.CreatePhotonBeam(Energy=qual, Name=seg_beam_name, GantryAngle=old_beam.GantryAngle, CouchAngle=old_beam.CouchAngle, CollimatorAngle=s.CollimatorAngle, IsocenterData=iso_data)  
+                    new_beam = new_beam_set.CreatePhotonBeam(BeamQualityId=qual, Name=seg_beam_name, GantryAngle=old_beam.GantryAngle, CouchRotationAngle=old_beam.CouchRotationAngle, CouchPitchAngle=old_beam.CouchPitchAngle, CouchRollAngle=old_beam.CouchRollAngle, CollimatorAngle=s.CollimatorAngle, IsocenterData=iso_data)  
                     seg_beam_names.append(seg_beam_name)
                     new_beam.BeamMU = round(old_beam.BeamMU * s.RelativeWeight, 2)
                     new_beam.CreateRectangularField()
@@ -247,7 +258,7 @@ def copy_beam_set() -> None:
                 new_beam.Description = old_beam.Description
             
             else:  # VMAT
-                new_beam = new_beam_set.CreateArcBeam(ArcStopGantryAngle=old_beam.ArcStopGantryAngle, ArcRotationDirection=old_beam.ArcRotationDirection, BeamQualityId=qual, Name=name, GantryAngle=beam.GantryAngle, CouchRotationAngle=beam.CouchRotationAngle, CollimatorAngle=beam.InitialCollimatorAngle, IsocenterData=iso_data)
+                new_beam = new_beam_set.CreateArcBeam(ArcStopGantryAngle=old_beam.ArcStopGantryAngle, ArcRotationDirection=old_beam.ArcRotationDirection, BeamQualityId=qual, Name=name, GantryAngle=old_beam.GantryAngle, CouchRotationAngle=old_beam.CouchRotationAngle, CouchPitchAngle=old_beam.CouchPitchAngle, CouchRollAngle=old_beam.CouchRollAngle, CollimatorAngle=old_beam.InitialCollimatorAngle, IsocenterData=iso_data)
                 existing_beam_names.append(name)
                 new_beam.BeamMU = old_beam.BeamMU
                 new_beam.Description = old_beam.Description
@@ -255,7 +266,8 @@ def copy_beam_set() -> None:
             new_beam.Number = beam_num
             beam_num += 1
 
-            old_beam_set.ComputeDoseOnAdditionalSets(ExaminationNames=[planning_exam.Name], FractionNumbers=[0])
+            # Does not work with uncommissioned machine
+            #old_beam_set.ComputeDoseOnAdditionalSets(ExaminationNames=[planning_exam.Name], FractionNumbers=[0])
 
     # Manually copy setup beams from old beam set
     if old_beam_set.PatientSetup.UseSetupBeams and old_beam_set.PatientSetup.SetupBeams.Count > 0:
