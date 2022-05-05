@@ -15,7 +15,7 @@ from System.Windows.Forms import MessageBox  # For displaying error messages
 
 
 # Absolute path to the directory where the temporary directory to hold the exported DICOm files will be created
-EXPORT_PATH_PARENT = os.path.join('T:', os.sep, 'Physics', 'Temp', 'copy_exam')
+EXPORT_PATH_PARENT = os.path.join('T:', os.sep, 'Physics', 'Temp', 'Copy Exam')
 
 
 def timestamp() -> str:
@@ -35,8 +35,8 @@ def timestamp() -> str:
     return dt.strftime('%M-%D-%YYYY %H_%M_%S')
 
 
-def compute_new_id(case: PyScriptObject, study_or_series: str) -> str:
-    """Creates a unique DICOM StudyInstanceUID or SeriesInstanceUID for an examination
+def compute_new_ids(case: PyScriptObject) -> List[str]:
+    """Creates a unique DICOM StudyInstanceUID and SeriesInstanceUID for an examination
     
     The new ID is based on the "maximum" ID across all exams in the case
     This "maximum" is the largest integer value of an ID with the periods removed
@@ -45,8 +45,6 @@ def compute_new_id(case: PyScriptObject, study_or_series: str) -> str:
     Arguments
     ---------
     case: The case containing the exam to generate a new ID for
-    study_or_series: The type of ID to generate
-                     Must be either 'Study' or 'Series'
 
     Returns
     -------
@@ -54,32 +52,40 @@ def compute_new_id(case: PyScriptObject, study_or_series: str) -> str:
 
     Example
     -------
-    Assuming that some_case has two exams with study IDs "1.4.2.9", "1.5.3.1", respectively:
-    "Maximum" ID = max(1429, 1531) = 1531
-    New ID = "1.5.3." + (1 + 1) = "1.5.3.2"
+    Assuming that some_case has two exams with study IDs "1.4.2.9", "1.5.3.1", respectively, and series IDs "7.18.9.1" and "9.0.1.13", respectively:
+    
+    "Maximum" study ID = max(1429, 1531) = 1531
+    New study ID = '1.5.3.' + (1 + 1) = '1.5.3.2'
 
-    compute_new_id(some_case, 'Study') -> "1.2.3.4"
+    "Maximum" series ID = max(71891, 90113) = 90113
+    New series ID = '9.0.1.' + (13 + 1) = '9.0.1.14'
+
+    compute_new_id(some_case) -> ['1.5.3.2', '9.0.1.14']
     """
-    # IDs of all exams in the case
-    all_ids = [e.GetAcquisitionDataFromDicom()[study_or_series + 'Module'][study_or_series + 'InstanceUID'] for e in case.Examinations]
-    all_ids.sort(key=lambda id_: int(id_.split('.')[-1]))
-    
-    # ID to base the new ID on
-    last_id = all_ids[-1]
+    ids = []
+    for id_type in ['Study', 'Series']:
+        # IDs of all exams in the case
+        all_ids = [e.GetAcquisitionDataFromDicom()[id_type + 'Module'][id_type + 'InstanceUID'] for e in case.Examinations]
+        all_ids.sort(key=lambda id_: int(id_.split('.')[-1]))
+        
+        # ID to base the new ID on
+        last_id = all_ids[-1]
 
-    # Extract last portion of ID, and everything else
-    dot_idx = last_id.rfind('.')
-    after_dot = last_id[(dot_idx + 1):]
-    before_dot = last_id[-1][:dot_idx]
+        # Extract last portion of ID, and everything else
+        dot_idx = last_id.rfind('.')
+        after_dot = last_id[(dot_idx + 1):]
+        before_dot = last_id[-1][:dot_idx]
+        
+        # Construct new ID
+        # First part is same. Last part is incremented by 1
+        new_id = before_dot + '.' + str(int(after_dot) + 1)
+
+        ids.append(new_id)
     
-    # Construct new ID
-    # First part is same. Last part is incremented by 1
-    new_id = before_dot + '.' + str(int(after_dot) + 1)
-    
-    return new_id
+    return ids
 
 
-def name_exam(case, exam, exam_name):
+def name_exam(case: PyScriptObject, exam: PyScriptObject, exam_name: str) -> str:
     """Generates an exam name unique among all exams in the case
 
     Name is made unique with a copy number in parentheses
@@ -165,8 +171,7 @@ def copy_exam():
         case.ScriptableDicomExport(**export_args)  # Retry the export, ignoring warnings
 
     # Compute new study and series IDs
-    new_study_id = compute_new_id(case, 'Study')
-    new_series_id = compute_new_id(case, 'Series')
+    new_study_id, new_series_id = compute_new_ids(case)
 
     # Change study and series IDs in all exported DICOM files
     for f in os.listdir(export_path):
