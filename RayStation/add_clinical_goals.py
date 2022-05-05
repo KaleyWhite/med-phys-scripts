@@ -1,5 +1,6 @@
 import clr
 from collections import OrderedDict
+import os
 import re
 import sys
 from typing import Dict, List
@@ -13,10 +14,10 @@ clr.AddReference('System.Windows.Forms')
 from System.Drawing import *
 from System.Windows.Forms import *
 
-sys.path.append(r'T:\Physics\KW\med-phys-scripts\RayStation')
-import copy_plan_without_changes
+sys.path.append(os.path.join('T:', os.sep, 'Physics', 'KW', 'med-phys-scripts', 'RayStation'))
+from copy_plan_without_changes import copy_plan_without_changes
 
-CLINICAL_GOALS_FILEPATH = r'T:\Physics\KW\med-phys-spreadsheets\Clinical Goals.xlsx'
+CLINICAL_GOALS_FILEPATH = os.path.join('T:', os.sep, 'Physics', 'KW', 'med-phys-spreadsheets', 'Clinical Goals.xlsx')
 
 # General and specific ROI names
 # Some goals in templates have 'general' ROI names (e.g., 'Stomach and intestines') that correspond to multiple possible 'specific' ROI names
@@ -47,7 +48,7 @@ def format_warnings(warnings_dict: Dict[str, List[str]]):
 
 
 class AddClinicalGoalsForm(Form):
-    """Form that allows user to select the clinical goals tenplates to apply"""
+    """Form that allows user to select the clinical goals templates to apply"""
 
     def __init__(self, templates: List[str], default_template: str):
         """Initializes an AddClinicalGoalsForm object.
@@ -56,7 +57,6 @@ class AddClinicalGoalsForm(Form):
             data: The clinical goals sets from the spreadsheet
             default_template: The name of the default selected template
         """
-
         self.Text = 'Add Clinical Goals'  # Form title
         self.AutoSize = True  
         self.AutoSizeMode = AutoSizeMode.GrowAndShrink  # Adapt form size to controls
@@ -154,7 +154,7 @@ def add_clinical_goals():
             sys.exit()
 
         # Copy plan and switch to new plan and corresponding beam set
-        new_plan = copy_plan_without_changes.copy_plan_without_changes()
+        new_plan = copy_plan_without_changes()
         patient.Save()
         new_plan.SetCurrent()
         plan = get_current('Plan')
