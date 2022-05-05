@@ -1,6 +1,7 @@
 import clr
 import os
 import sys
+from typing import Optional
 
 import pandas as pd
 
@@ -31,19 +32,64 @@ def crmc_color(roi_name: str) -> str:
     tg263 = pd.read_excel(TG263_PATH, sheet_name='Names & Colors', usecols=['TG-263 Primary Name', 'Color'])
     tg263.set_index('TG-263 Primary Name', drop=True, inplace=True)
     try:
-        return tg263.loc[roi_name, 'Color'][1:-1]
+        return tg263.loc[roi_name, 'Color'][1:-1]  # Remove parens
     except KeyError:
         return Color.Purple
 
 
-def dose_grid_box() -> PyScriptObject:
-    """Adds a box ROI with geometry that outlines the dose grid of the current beam set
+def beam_set_from_beam(case: PyScriptObject, beam: PyScriptObject) -> PyScriptObject:
+    """Gets the beam set that the beam belongs to.
+
+    Args:
+        case: The case that the beam belongs to
+        beam: The beam
+
+    Returns
+    -------
+    The beam set containing the beam, or None if the beam is not found in the case
+    """
+    for plan in case.TreatmentPlans:
+        for beam_set in plan.BeamSets:
+            for b in beam_set.Beams:
+                if b.Equals(beam):
+                    return beam_set
+
+
+def exam_from_dose(case: PyScriptObject, dose: PyScriptObject) -> PyScriptObject:
+    """Gets the examination associated with the dose distribution
+
+    Arguments
+    ---------
+    case: The case that the dose distribution belongs to
+    dose: The dose distribution
+
+    Returns
+    -------
+    The examination associated with the dose distribution
+    """
+    if hasattr(dose, 'WeightedDoseReferences'):  # Plan dose, dose sum
+        return dose.WeightedDoseReferences[0].DoseDistribution.ForBeamSet.GetStructureSet().OnExamination
+    if hasattr(dose, 'ForBeamSet'):  # Beam set dose, perturbed dose, dose on additional set
+        return dose.ForBeamSet.GetPlanningExamination()
+    if hasattr(dose, 'ForBeam'):  # Beam dose
+        return beam_set_from_beam(case, dose.ForBeam).GetPlanningExamination()
+    if hasattr(dose, 'OfDoseDistribution'):  # Deformed dose
+        return dose.OfDoseDistribution.ForBeamSet.GetPlanningExamination()
+
+
+def dose_grid_box(case: PyScriptObject, dose_dist: Optional[PyScriptObject]) -> PyScriptObject:
+    """Adds a box ROI with geometry that outlines the dose grid
+
+    Arguments
+    ---------
+    case: The case that the dose distribution belongs to
+    dose_dist: The dose distribution whose dose grid to outline
+               If not provided, the current beam set is used
     
     Returns
     -------
     The box ROI
     """
-
     # Get current case
     try:
         case = get_current('Case')
@@ -51,20 +97,20 @@ def dose_grid_box() -> PyScriptObject:
         MessageBox.Show('No case is open. Click OK to abort the script.', 'No Open Case')
         sys.exit()
 
-    # Get current beam set
-    try:
-        beam_set = get_current('BeamSet')
-    except:
-        MessageBox.Show('No beam set is loaded. Click OK to abort the script.', 'No Beam Set Loaded')
-        sys.exit()
-
-    dose = beam_set.FractionDose
-    struct_set = beam_set.GetStructureSet()
-    exam = struct_set.OnExamination
-    dg = dose.InDoseGrid
+    # Get dose grid
+    if dose_dist is None:
+        # Get current beam set
+        try:
+            beam_set = get_current('BeamSet')
+            dose_dist = beam_set.FractionDose
+        except:
+            MessageBox.Show('No beam set is loaded. Click OK to abort the script.', 'No Beam Set Loaded')
+            sys.exit()
+    dg = dose_dist.InDoseGrid
+    exam = exam_from_dose(case, dose_dist)
     
     # Get DoseGrid ROI name and color
-    roi_name = case.PatientModel.GetUniqueRoiName(Name='zDoseGrid')
+    roi_name = case.PatientModel.GetUniqueRoiName(DesiredName='zDoseGrid')
     color = crmc_color('zDoseGrid')
 
     # Create dose grid ROI
@@ -78,7 +124,7 @@ def dose_grid_box() -> PyScriptObject:
 
     # Create box and update its geometry (must update all geometries at once)
     box.CreateBoxGeometry(Size=box_sz, Examination=exam, Center=box_ctr, VoxelSize=dg.VoxelSize.x)
-    if dose.DoseValues is not None:
-        dose.UpdateDoseGridStructures()
+    if dose_dist.DoseValues is not None:
+        dose_dist.UpdateDoseGridStructures()
 
     return box
