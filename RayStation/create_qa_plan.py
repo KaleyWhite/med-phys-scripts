@@ -4,6 +4,8 @@ import re
 import sys
 from typing import List
 
+import pydicom
+
 from connect import *
 from connect.connect_cpython import PyScriptObject  # For type hints
 
@@ -146,11 +148,24 @@ def create_qa_plan() -> None:
     os.makedirs(qa_folder_name)  # Create folder
     
     # Export QA plan
-    export_args = {'ExportFolderPath': qa_folder_name, 'QaPlanIdentity': 'Patient', 'ExportBeamSet': True, 'ExportBeamSetDose': True, 'ExportBeamSetBeamDose': True, 'IgnorePreConditionWarnings': False}
-    try:
-        qa_plan.ScriptableQADicomExport(**export_args)
-    except SystemError as e:
-        res = MessageBox.Show('{}\nProceed?'.format(e), 'Create QA Plan', MessageBoxButtons.YesNo)
-        if res == DialogResult.Yes:
-            export_args['IgnorePreConditionWarnings'] = True
+    for machine in ['E1', 'E2']:
+        machine_folder_name = os.path.join(qa_folder_name, machine)
+        os.mkdir(machine_folder_name)
+        
+        export_args = {'ExportFolderPath': machine_folder_name, 'QaPlanIdentity': 'Patient', 'ExportBeamSet': True, 'ExportBeamSetDose': True, 'ExportBeamSetBeamDose': True, 'IgnorePreConditionWarnings': False}
+        try:
             qa_plan.ScriptableQADicomExport(**export_args)
+        except SystemError as e:
+            res = MessageBox.Show('{}\nProceed?'.format(e), 'Create QA Plan', MessageBoxButtons.YesNo)
+            if res == DialogResult.Yes:
+                export_args['IgnorePreConditionWarnings'] = True
+                qa_plan.ScriptableQADicomExport(**export_args)
+
+        for f in os.listdir(machine_folder_name):
+            if f.startswith('RP'):
+                f = os.path.join(machine_folder_name, f)
+                dcm = pydicom.dcmread(f)
+                for bs in dcm.BeamSequence:
+                    bs.TreatmentMachineName = machine
+                    bs[0x4001, 0x1012].value = machine.encode('ascii')
+                dcm.save_as(f, write_like_original=False)  # Overwrite original DICOM file
