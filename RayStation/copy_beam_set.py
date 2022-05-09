@@ -40,7 +40,7 @@ def is_sabr(beam_set: PyScriptObject) -> bool:
 
 
 def get_tx_technique(beam_set: PyScriptObject) -> Optional[str]:
-    """Determine the treatment technique of the beam set
+    """Determines the treatment technique of the beam set
 
     Code modified from RS support
     
