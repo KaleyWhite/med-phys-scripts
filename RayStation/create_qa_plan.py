@@ -19,6 +19,9 @@ COLORWASH_TEMPLATE = 'CRMC Standard Dose Colorwash'
 # Absolute path to the directory to export DICOM files to
 EXPORT_PATH = os.path.join('T:', os.sep, 'Physics', 'QA & Procedures', 'Delta4', 'DQA Plans')
 
+# List of machine names to export DQA plans for
+MACHINES = ['E1', 'E2', 'ELEKTA']
+
 
 def unique_qa_plan_name(plan: PyScriptObject) -> str:
     """Creates a DQA plan name unique in the plan
@@ -76,9 +79,12 @@ def format_pt_name(pt: PyScriptObject) -> str:
 
 
 def create_qa_plan() -> None:
-    """Creates and exports a DQA plan for the current photon beam set
+    """Creates and exports DQA plan for the current photon beam set
     
     If export folder with the computed name already exists, delete and recreate it
+    
+    Export folder contains subfolder for each machine name in `MACHINES`
+    The DICOM attributes TreatmentMachineName and a RayStation-specific private field in each machine folder are set to the machine name
 
     Detailed example of the code that names the new QA plan:
     Existing QA plans are 'Test' and 'Rectal Boost DQA'
@@ -148,10 +154,12 @@ def create_qa_plan() -> None:
     os.makedirs(qa_folder_name)  # Create folder
     
     # Export QA plan
-    for machine in ['E1', 'E2']:
+    for machine in MACHINES:
+        # Create subfolder for machine
         machine_folder_name = os.path.join(qa_folder_name, machine)
         os.mkdir(machine_folder_name)
         
+        # Export
         export_args = {'ExportFolderPath': machine_folder_name, 'QaPlanIdentity': 'Patient', 'ExportBeamSet': True, 'ExportBeamSetDose': True, 'ExportBeamSetBeamDose': True, 'IgnorePreConditionWarnings': False}
         try:
             qa_plan.ScriptableQADicomExport(**export_args)
@@ -161,11 +169,14 @@ def create_qa_plan() -> None:
                 export_args['IgnorePreConditionWarnings'] = True
                 qa_plan.ScriptableQADicomExport(**export_args)
 
-        for f in os.listdir(machine_folder_name):
-            if f.startswith('RP'):
-                f = os.path.join(machine_folder_name, f)
-                dcm = pydicom.dcmread(f)
-                for bs in dcm.BeamSequence:
-                    bs.TreatmentMachineName = machine
-                    bs[0x4001, 0x1012].value = machine.encode('ascii')
-                dcm.save_as(f, write_like_original=False)  # Overwrite original DICOM file
+        # Change machine name in DICOM files if necessary
+        if machine != beam_set.MachineReference.MachineName:  # Machine name alaready correct if it is the beam set's MachineName in RayStation
+            for f in os.listdir(machine_folder_name):
+                if f.startswith('RP'):  # Only RTPLAN files (not RTDOSE) have the machine name attributes
+                    f = os.path.join(machine_folder_name, f)  # Absolute path to DICOM file
+                    dcm = pydicom.dcmread(f)
+                    # Set machine name for each beam
+                    for bs in dcm.BeamSequence:
+                        bs.TreatmentMachineName = machine
+                        bs[0x4001, 0x1012].value = machine.encode('ascii')  # Convert to byte string
+                    dcm.save_as(f, write_like_original=False)  # Overwrite original DICOM file
