@@ -78,6 +78,75 @@ def format_pt_name(pt: PyScriptObject) -> str:
     return name
 
 
+def export_qa_plan(qa_plan: PyScriptObject, qa_folder_name: str, machine: str) -> None:
+    """Exports the QA plan's RTDOSE and RTPLAN files to a subfolder of `qa_folder_name` called `machine`
+
+    Arguments
+    ---------
+    qa_plan: The QA plan to export
+    qa_folder_name: The path of the directory to export to, relative to `EXPORT_PATH`
+                    Must already exist
+    machine: The name of the subdirectory of `qa_folder_name` to export to
+             Must not already exist
+    """
+    # Create subfolder to export to
+    machine_folder_name = os.path.join(qa_folder_name, machine)
+    os.mkdir(machine_folder_name)
+    # Export
+    export_args = {'ExportFolderPath': machine_folder_name, 'QaPlanIdentity': 'Patient', 'ExportBeamSet': True, 'ExportBeamSetDose': True, 'ExportBeamSetBeamDose': True, 'IgnorePreConditionWarnings': False}
+    try:
+        qa_plan.ScriptableQADicomExport(**export_args)
+    except SystemError as e:
+        res = MessageBox.Show(str(e) + '\nProceed?', 'Create QA Plan', MessageBoxButtons.YesNo)
+        if res == DialogResult.Yes:
+            export_args['IgnorePreConditionWarnings'] = True
+            qa_plan.ScriptableQADicomExport(**export_args)
+
+
+def copy_for_new_machine(qa_folder_name: str, old_machine: str, new_machine: str):
+    """Copies the QA DICOM files from one folder to another and changes the machine name in the copied RTPLAN file
+
+    Arguments
+    ---------
+    qa_folder_name: The path to the directory containing the `old_machine` directory, relative to `EXPORT_PATH`
+    old_machine: The subdirectory to copy, relative to `qa_folder_name`
+                 Must already exist
+    new_machine: The machine to change the new DICOM files to use. Also the name of the new subdirectory
+                 Must not already exist
+    """
+    src = os.path.join(EXPORT_PATH, qa_folder_name, old_machine)
+    dst = os.path.join(EXPORT_PATH, qa_folder_name, new_machine)
+    shutil.copytree(src, dst)
+
+    change_machine(qa_folder_name, new_machine)
+
+
+def change_machine(qa_folder_name, new_machine):
+    """Changes the machine of the RTPLAN DICOM file in `qa_folder_name`
+
+    Acoording to RayStation's export conventions, assumes the RTPLAN file starts with "RP" while all other files (RTDOSE) in the machine directory start with "RD"
+
+    The following DICOM attributes are changed:
+    - For each beam in the BeamSequence (300A, 00B0), TreatmentMachineName is set to the new machine name
+    - The RayStation-specific Private Data element (4001, 1012) value is set to the binary representation of the new machine name
+
+    Arguments
+    ---------
+    qa_folder_name: The path of the QA DICOM files, relative to `EXPORT_PATH`
+    new_machine: The subdirectory of `qa_folder_name` that contains the RTPLAN file to change
+                 Must already exist
+    """
+    path = os.path.join(EXPORT_PATH, qa_folder_name, new_machine)
+    rp_filename = sorted(os.listdir(path))[-1]
+    rp_filepath = os.path.join(path, rp_filename)
+    dcm = pydicom.dcmread(rp_filepath)
+    # Set machine name for each beam
+    for bs in dcm.BeamSequence:
+        bs.TreatmentMachineName = new_machine
+        bs[0x4001, 0x1012].value = new_machine.encode('ascii')  # Convert to byte string
+    dcm.save_as(rp_filepath, write_like_original=False)  # Overwrite original DICOM file
+
+
 def create_qa_plan() -> None:
     """Creates and exports DQA plan for the current photon beam set
     
@@ -152,31 +221,16 @@ def create_qa_plan() -> None:
     if os.path.isdir(qa_folder_name):
         shutil.rmtree(qa_folder_name)
     os.makedirs(qa_folder_name)  # Create folder
-    
-    # Export QA plan
-    for machine in MACHINES:
-        # Create subfolder for machine
-        machine_folder_name = os.path.join(qa_folder_name, machine)
-        os.mkdir(machine_folder_name)
-        
-        # Export
-        export_args = {'ExportFolderPath': machine_folder_name, 'QaPlanIdentity': 'Patient', 'ExportBeamSet': True, 'ExportBeamSetDose': True, 'ExportBeamSetBeamDose': True, 'IgnorePreConditionWarnings': False}
-        try:
-            qa_plan.ScriptableQADicomExport(**export_args)
-        except SystemError as e:
-            res = MessageBox.Show('{}\nProceed?'.format(e), 'Create QA Plan', MessageBoxButtons.YesNo)
-            if res == DialogResult.Yes:
-                export_args['IgnorePreConditionWarnings'] = True
-                qa_plan.ScriptableQADicomExport(**export_args)
 
-        # Change machine name in DICOM files if necessary
-        if machine != beam_set.MachineReference.MachineName:  # Machine name alaready correct if it is the beam set's MachineName in RayStation
-            for f in os.listdir(machine_folder_name):
-                if f.startswith('RP'):  # Only RTPLAN files (not RTDOSE) have the machine name attributes
-                    f = os.path.join(machine_folder_name, f)  # Absolute path to DICOM file
-                    dcm = pydicom.dcmread(f)
-                    # Set machine name for each beam
-                    for bs in dcm.BeamSequence:
-                        bs.TreatmentMachineName = machine
-                        bs[0x4001, 0x1012].value = machine.encode('ascii')  # Convert to byte string
-                    dcm.save_as(f, write_like_original=False)  # Overwrite original DICOM file
+    # Export once and copy for all machines
+    beam_set_machine = beam_set.MachineReference.MachineName 
+    if beam_set_machine in MACHINES:
+        export_qa_plan(qa_plan, qa_folder_name, beam_set_machine)
+        MACHINES.remove(beam_set_machine)
+        for machine in MACHINES:
+            copy_for_new_machine(qa_folder_name, beam_set_machine, machine)
+    else:
+        export_qa_plan(qa_plan, qa_folder_name, MACHINES[0])
+        change_machine(qa_folder_name, MACHINES[0])
+        for machine in MACHINES[1:]:
+            copy_for_new_machine(qa_folder_name, MACHINES[0], machine)
