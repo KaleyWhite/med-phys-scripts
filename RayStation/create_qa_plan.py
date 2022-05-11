@@ -103,7 +103,7 @@ def export_qa_plan(qa_plan: PyScriptObject, qa_folder_name: str, machine: str) -
             qa_plan.ScriptableQADicomExport(**export_args)
 
 
-def copy_for_new_machine(qa_folder_name: str, old_machine: str, new_machine: str):
+def copy_for_new_machine(qa_folder_name: str, old_machine: str, new_machine: str) -> None:
     """Copies the QA DICOM files from one folder to another and changes the machine name in the copied RTPLAN file
 
     Arguments
@@ -121,7 +121,7 @@ def copy_for_new_machine(qa_folder_name: str, old_machine: str, new_machine: str
     change_machine(qa_folder_name, new_machine)
 
 
-def change_machine(qa_folder_name, new_machine):
+def change_machine(qa_folder_name: str, new_machine: str) -> None:
     """Changes the machine of the RTPLAN DICOM file in `qa_folder_name`
 
     Acoording to RayStation's export conventions, assumes the RTPLAN file starts with "RP" while all other files (RTDOSE) in the machine directory start with "RD"
