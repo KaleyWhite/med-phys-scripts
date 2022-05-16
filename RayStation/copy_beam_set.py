@@ -76,7 +76,7 @@ def unique_name(desired_name: str, existing_names: List[str]) -> str:
     """Makes the desired name unique among all names in the list
 
     Name is made unique with a copy number in parentheses
-    New name is truncated to be at most 16 charcaters long
+    New name is truncated to be at most 16 characters long
 
     Arguments
     ---------
