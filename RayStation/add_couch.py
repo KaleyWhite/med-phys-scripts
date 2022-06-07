@@ -12,7 +12,7 @@ clr.AddReference('System.Windows.Forms')
 from System.Windows.Forms import MessageBox  # I use to display errors
 
 
-EXPORT_PATH = r'T:\Physics\Temp\AddCouchScript'
+ADD_COUCH_EXPORT_PATH = os.path.join('T:', os.sep, 'Physics', 'Temp', 'Add Couch')
 
 
 def add_couch() -> None:
@@ -43,6 +43,18 @@ def add_couch() -> None:
         sys.exit()
     patient_db = get_current('PatientDB')
     struct_set = case.PatientModel.StructureSets[exam.Name]
+
+    warnings = ''  # We will display any warnings at the end of the script
+
+    # Ensure exam is not used in an approved beam set
+    approved_beam_set_names = []
+    for plan in case.TreatmentPlans:
+        for beam_set in plan.BeamSets:
+            if beam_set.GetPlanningExamination().Equals(exam) and beam_set.Review is not None and beam_set.Review.ApprovalStatus == 'Approved':
+                approved_beam_set_names.append(beam_set.DicomPlanLabel)
+    if approved_beam_set_names:
+        MessageBox.Show('The couch geometries have materials defined, and the current exam is used in approved beam set(s) (' + ', '.join('"' + name + '"' for name in approved_beam_set_names) + '), so couch geometries cannot be added. Click OK to abort the script.', 'Exam in Approved Beam Set(s)')
+        sys.exit()
     
     # Patient position
     pt_pos = exam.PatientPosition
@@ -70,6 +82,15 @@ def add_couch() -> None:
     if outer_couch.Name in approved_roi_names or inner_couch.Name in approved_roi_names:
         MessageBox.Show('One or more couch structures is approved on the current exam. Click OK to abort the script.', 'Caouch Geometry(ies) Are Approved')
         sys.exit()
+
+    """# Delete couch ROIs if they already exist
+    for couch_struct in couch_structs:
+        print(couch_struct.Name)
+        try:
+            case.PatientModel.RegionsOfInterest[couch_struct.Name].DeleteRoi()
+        except KeyError:  # ROI does not exist
+            print('except')
+            continue"""
     
     # Apply template
     # Doesn't matter which source exam we use, so just use the first
@@ -77,23 +98,24 @@ def add_couch() -> None:
 
     ## Export exam so we can use pydicom to extract pixel data
     # Create export folder
-    if os.path.isdir(EXPORT_PATH):
-        shutil.rmtree(EXPORT_PATH)
-    os.makedirs(EXPORT_PATH)
+    if os.path.isdir(ADD_COUCH_EXPORT_PATH):
+        shutil.rmtree(ADD_COUCH_EXPORT_PATH)
+    os.makedirs(ADD_COUCH_EXPORT_PATH)
 
     # Export exam
     # No RS functionality to export a single CT slice
     patient.Save()  # Error if you don't save before export
     try:
-        case.ScriptableDicomExport(ExportFolderPath=EXPORT_PATH, Examinations=[exam.Name], IgnorePreConditionWarnings=False)
+        case.ScriptableDicomExport(ExportFolderPath=ADD_COUCH_EXPORT_PATH, Examinations=[exam.Name], IgnorePreConditionWarnings=False)
     except:
-        case.ScriptableDicomExport(ExportFolderPath=EXPORT_PATH, Examinations=[exam.Name], IgnorePreConditionWarnings=True)
+        case.ScriptableDicomExport(ExportFolderPath=ADD_COUCH_EXPORT_PATH, Examinations=[exam.Name], IgnorePreConditionWarnings=True)
 
     ## Get y-coordinate of top of sim couch
     # If entire sim couch is in scan, the couch top is the fourth 'bright' peak in the R-L middle
 
     # Get pixel intensities array
-    dcm = dcmread(EXPORT_PATH + r'\\' + os.listdir(EXPORT_PATH)[0])
+    first_filename = os.listdir(ADD_COUCH_EXPORT_PATH)[0]  # Doesn't matter which CT DICOM file we use, so just use the first one
+    dcm = dcmread(os.path.join(ADD_COUCH_EXPORT_PATH, first_filename))
     intensities = dcm.pixel_array
 
     # Select intensities in R-L center
@@ -105,23 +127,27 @@ def add_couch() -> None:
     # `find_peaks` returns a tuple whose first element is the indices of the peaks
     y_axis_peaks = find_peaks(y_axis_intensities, height=(0, 700), prominence=180)[0]
 
-    # 2nd peak from the posterior end
-    second_peak = y_axis_peaks[-1]
+    if len(y_axis_peaks) > 0:
+        # 2nd peak from the posterior end
+        second_peak = y_axis_peaks[-1]
 
-    # Convert pixel y-coordinate to exam coordinate
-    if is_supine:
-        correct_y = img_stack.Corner.y + second_peak * img_stack.PixelSize.y - 2.25
+        # Convert pixel y-coordinate to exam coordinate
+        if is_supine:
+            correct_y = img_stack.Corner.y + second_peak * img_stack.PixelSize.y - 2.25
+        else:
+            correct_y = img_stack.Corner.y - second_peak * img_stack.PixelSize.y + 2.25
+        
+        # The TOP of the couch goes at the 2nd peak, so compute where the P-A CENTER of the couch should go
+        # Center is half a couch height down
+        outer_couch_bounds = struct_set.RoiGeometries[outer_couch.Name].GetBoundingBox()
+        outer_couch_ht = outer_couch_bounds[1].y - outer_couch_bounds[0].y
+        if is_supine:
+            correct_y += outer_couch_ht / 2
+        else:
+            correct_y -= outer_couch_ht / 2
     else:
-        correct_y = img_stack.Corner.y - second_peak * img_stack.PixelSize.y + 2.25
-    
-    # The TOP of the couch goes at the 2nd peak, so compute where the P-A CENTER of the couch should go
-    # Center is half a couch height down
-    outer_couch_bounds = struct_set.RoiGeometries[outer_couch.Name].GetBoundingBox()
-    outer_couch_ht = outer_couch_bounds[1].y - outer_couch_bounds[0].y
-    if is_supine:
-        correct_y += outer_couch_ht / 2
-    else:
-        correct_y -= outer_couch_ht / 2
+        correct_y = None
+        warnings += 'Could not determine correct AP coordinate. Manually position the couch geometries in the transverse view and then run the Center Couch script to correct any RL error you may have introduced.'
 
     # Correct x- and z-coordinates
     # x is R-L center (always zero)
@@ -137,12 +163,15 @@ def add_couch() -> None:
         # Current position
         geom_ctr = geom.GetCenterOfRoi()
 
+        # If AP coordinate (top of couch) was not found above, don't move the couch in the AP direction
+        y_chg = 0 if correct_y is None else correct_y - geom_ctr.y
+
         # Transformation matrix
         # Each x, y, and z transform is the difference between the correct and current coordinates
         mat = {'M11': 1, 'M12': 0, 'M13': 0, 'M14': correct_x - geom_ctr.x,
-            'M21': 0, 'M22': 1, 'M23': 0, 'M24': correct_y - geom_ctr.y,
-            'M31': 0, 'M32': 0, 'M33': 1, 'M34': correct_z - geom_ctr.z, 
-            'M41': 0, 'M42': 0, 'M43': 0, 'M44': 1}
+               'M21': 0, 'M22': 1, 'M23': 0, 'M24': y_chg,
+               'M31': 0, 'M32': 0, 'M33': 1, 'M34': correct_z - geom_ctr.z, 
+               'M41': 0, 'M42': 0, 'M43': 0, 'M44': 1}
 
         # Reposition couch structure
         geom.OfRoi.TransformROI3D(Examination=exam, TransformationMatrix=mat)
@@ -165,4 +194,8 @@ def add_couch() -> None:
         bs.ComputeDose(ComputeBeamDoses=True, DoseAlgorithm=bs.AccurateDoseAlgorithm.DoseAlgorithm)
 
     # Remove unnecessary exported files
-    shutil.rmtree(EXPORT_PATH)
+    shutil.rmtree(ADD_COUCH_EXPORT_PATH)
+
+    # Display warnings if they exist
+    if warnings:
+        MessageBox.Show(warnings, 'Warnings')

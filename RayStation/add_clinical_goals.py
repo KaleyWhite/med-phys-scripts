@@ -3,20 +3,25 @@ from collections import OrderedDict
 import os
 import re
 import sys
-from typing import Dict, List
+from typing import Dict, List, Optional
+
+from connect import *
+from connect.connect_cpython import PyScriptObject
 
 import pandas as pd  # Clinical Goals template data is read in as DataFrame
-from connect import *
 
+clr.AddReference('System')
 clr.AddReference('System.Drawing')
 clr.AddReference('System.Windows.Forms')
-
+from System import EventArgs  # For type hints
 from System.Drawing import *
 from System.Windows.Forms import *
 
 sys.path.append(os.path.join('T:', os.sep, 'Physics', 'KW', 'med-phys-scripts', 'RayStation'))
 from copy_plan_without_changes import copy_plan_without_changes
 
+
+# Absolute path to the clinical goals spreadsheet
 CLINICAL_GOALS_FILEPATH = os.path.join('T:', os.sep, 'Physics', 'KW', 'med-phys-spreadsheets', 'Clinical Goals.xlsx')
 
 # General and specific ROI names
@@ -29,15 +34,27 @@ SPECIFIC_ROIS = {
 SPECIFIC_ROIS['Stomach and intestines'] = SPECIFIC_ROIS['Bag_Bowel'] + ['Stomach']
 
 
-def format_warnings(warnings_dict: Dict[str, List[str]]):
-    # Helper function that nicely formats a dictionary of strings into one long string
-    # E.g., format_warnings({'A': ['B', 'C'], 'D': ['E']}) ->
-    #     -  A
-    #         -  B
-    #         -  C
-    #     -  D
-    #         - E
+def format_warnings(warnings_dict: Dict[str, List[str]]) -> str:
+    """Nicely formats a dictionary of warning strings into one long string
 
+    Argument
+    --------
+    warnings_dict: Dictionary with warning types as keys and lists of warnings of that type, as values
+
+    Returns
+    -------
+    The formatted warnings string
+
+    Example
+    -------
+    format_warnings({'A': ['C', 'B'], 'D': ['E']}) ->
+    '   -  A
+            -  B
+            -  C
+        -  D
+            -  E
+    '
+    """
     warnings_str = ''
     for k, v in warnings_dict.items():
         warnings_str += '\n\t-  ' + k
@@ -50,7 +67,7 @@ def format_warnings(warnings_dict: Dict[str, List[str]]):
 class AddClinicalGoalsForm(Form):
     """Form that allows user to select the clinical goals templates to apply"""
 
-    def __init__(self, templates: List[str], default_template: str):
+    def __init__(self, templates: List[str], default_template: str) -> None:
         """Initializes an AddClinicalGoalsForm object.
 
         Args:
@@ -84,48 +101,57 @@ class AddClinicalGoalsForm(Form):
         y += self.clear_existing_cb.Height + 15
 
         # Templates choices
-        self.choose_templates_lb = ListBox()
-        self.choose_templates_lb.Location = Point(15, y)
-        self.choose_templates_lb.SelectionMode = SelectionMode.MultiExtended
-        self.choose_templates_lb.Visible = True
+        self._choose_templates_lb = ListBox()
+        self._choose_templates_lb.Location = Point(15, y)
+        self._choose_templates_lb.SelectionMode = SelectionMode.MultiExtended
+        self._choose_templates_lb.Visible = True
 
-        self.choose_templates_lb.HorizontalScrollbar = False
-        self.choose_templates_lb.VerticalScrollbar = False
+        self._choose_templates_lb.HorizontalScrollbar = False
+        self._choose_templates_lb.VerticalScrollbar = False
         
-        self.choose_templates_lb.Items.AddRange(templates)
+        self._choose_templates_lb.Items.AddRange(templates)
 
         selected_idx = templates.index(default_template)
-        self.choose_templates_lb.SetSelected(selected_idx, True)
+        self._choose_templates_lb.SetSelected(selected_idx, True)
         
-        self.choose_templates_lb.Height = self.choose_templates_lb.PreferredHeight
-        self.choose_templates_lb.Width = max(TextRenderer.MeasureText(template, self.choose_templates_lb.Font).Width for template in templates)
+        self._choose_templates_lb.Height = self._choose_templates_lb.PreferredHeight
+        self._choose_templates_lb.Width = max(TextRenderer.MeasureText(template, self._choose_templates_lb.Font).Width for template in templates)
+
+        self._choose_templates_lb.SelectedValueChanged += self._choose_templates_lb_SelectedValueChanged
         
-        self.Controls.Add(self.choose_templates_lb)
-        y += self.choose_templates_lb.Height + 15
+        self.Controls.Add(self._choose_templates_lb)
+        y += self._choose_templates_lb.Height + 15
 
-        self.ok = Button()
-        self.ok.Click += self.ok_clicked
-        self.ok.Location = Point(15, y)
-        self.ok.Text = 'OK'
-        self.AcceptButton = self.ok
-        self.Controls.Add(self.ok)
+        self._ok_btn = Button()
+        self._ok_btn.Click += self._ok_clicked
+        self._ok_btn.Location = Point(15, y)
+        self._ok_btn.Text = 'OK'
+        self.AcceptButton = self._ok_btn
+        self.Controls.Add(self._ok_btn)
 
-    def set_ok_enabled(self, sender=None, event=None):
-        # Enable or disable 'OK' button
-        # Enable only if at least one template is selected
-        self.ok.Enabled = self.choose_templates_lb.SelectedItems.Count > 0
+    def _choose_templates_lb_SelectedValueChanged(self, sender: ListBox, event: EventArgs) -> None:
+        """Handles the event of changing selected item(s) in the listbox
 
-    def ok_clicked(self, sender, event):
+        Enables the "OK" button if any listbox values are selected, disables it otherwise
+        """
+        self._ok_btn.Enabled = self._choose_templates_lb.SelectedItems.Count > 0
+
+    def _ok_clicked(self, sender: Button, event: EventArgs) -> None:
         # Event handler for 'OK' button click
         self.DialogResult = DialogResult.OK
 
 
-def add_clinical_goals():
+def add_clinical_goals(gui=True, template_names=None):
     """Applies clinical goals template(s) from spreadsheet, to the current plan
-    
-    User chooses templates from a GUI
+
+    Arguments
+    ---------
+    gui: True if the user should choose templates from a GUI, False to use the `templates` argument instead
+         Defaults to True
+    template_names: List of template names to apply
+                    Ignored if `gui` is True
+                    If `gui` is False but `template_names` is not provided, all templates that match the MD, are applied    
     """
-    
     # Get current variables
     try:
         patient = get_current('Patient')
@@ -166,13 +192,13 @@ def add_clinical_goals():
     # Ensure that this is a photon beam set
     if beam_set.Modality != 'Photons':
         MessageBox.Show('The current beam set is not a photon beam set. Click OK to abort the script.', 'Incorrect Modality')
-        sys.exit()  # Exit with an error
+        sys.exit()  # Exit script
 
     # Ensure that beam set machine is commissioned
     machine = beam_set.MachineReference.MachineName
     if get_current('MachineDB').GetTreatmentMachine(machineName=machine) is None:
         MessageBox.Show('Machine "' + machine + '" is uncommissioned. Click OK to abort the script.', 'Uncommissioned Machine')
-        sys.exit(1)
+        sys.exit()
 
     warnings = ''  # Warnings to display at end of script (if there were any)
 
@@ -209,12 +235,13 @@ def add_clinical_goals():
     data = pd.read_excel(rdr, sheet_name=sheets, engine='openpyxl', usecols=['ROI', 'Goal', 'Notes'])  # Default xlrd engine does not support xlsx
     
     # Get options from user
-    form = AddClinicalGoalsForm(sheets, default_template)
-    form.ShowDialog()
-    if form.DialogResult != DialogResult.OK:  # 'OK' button was not clicked
-        sys.exit()
-    clear_existing = form.clear_existing_cb.Checked
-    template_names = list(form.choose_templates_lb.SelectedItems)
+    if gui:
+        form = AddClinicalGoalsForm(sheets, default_template)
+        form.ShowDialog()
+        if form.DialogResult != DialogResult.OK:  # 'OK' button was not clicked
+            sys.exit()
+        clear_existing = form.clear_existing_cb.Checked
+        template_names = list(form.choose_templates_lb.SelectedItems)
 
     # Text of checked RadioButtons
     # Clear existing Clinical Goals

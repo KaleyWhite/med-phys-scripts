@@ -284,7 +284,7 @@ def goal_str(goal: PyScriptObject) -> str:
     Example
     -------
     Given some_goal V2000cGy < 0.25cm^3:
-    goal_str(some_goal) -> "At most 0.25 cm^3 volume at 2000 cGy dose"
+    goal_str(some_goal) -> "At most 0.25 cm^3 volume at __ cGy dose"
     """
     goal_type = goal.PlanningGoal.Type
 

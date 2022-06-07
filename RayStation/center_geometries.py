@@ -1,7 +1,7 @@
 import clr
 from collections import OrderedDict
 import sys
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from connect import *
 from connect.connect_cpython import PyScriptObject  # For type hints
@@ -163,10 +163,17 @@ def exam_ctr(exam: PyScriptObject) -> Dict[str, float]:
     return ctr
 
 
-def center_geometries() -> None:
+def center_geometries(center_info: Optional[Dict[str, List[bool]]] = None) -> None:
     """Centers ROI geometries in the R-L, A-P, and/or I-S directions on the current exam
 
-    The user chooses the ROIs and directions from a GUI
+    If `center_info` is None, the user chooses the ROIs and directions from a GUI, which displays only unapproved, nonempty ROIs
+    For provided `center_info`, nonexistent, approved, or empty ROIs are ignored
+
+    Argument
+    --------
+    center_info: Dictionary of ROI names and directions in which to center the ROI
+                 Keys are ROI names. Values are Boolean lists of length 3: one value for each direction R-L, A-P, and I-S, in that order.
+                 Defaults to None
     """
     try:
         case = get_current('Case')
@@ -183,17 +190,23 @@ def center_geometries() -> None:
     struct_set = case.PatientModel.StructureSets[exam.Name]
     approved_roi_names = list(set(geom.OfRoi.Name for approved_ss in struct_set.ApprovedStructureSets for geom in approved_ss.ApprovedRoiStructures))
     roi_names = sorted([geom.OfRoi.Name for geom in struct_set.RoiGeometries if geom.OfRoi.Name not in approved_roi_names and geom.HasContours()], key = lambda x: x.lower())
-    if not roi_names:
-        MessageBox.Show('There are no non-empty, unapproved ROI geometries on the current exam. Click OK to abort the script.', 'No Non-Empty, Unapproved Geometries')
-        sys.exit()
 
-    # Get user input from form
-    form = CenterGeometriesForm(roi_names)
-    form.ShowDialog()
-    if form.DialogResult != DialogResult.OK:
-        sys.exit()
-    center_info = form.center_info
-
+    # Get ROIs and directions to center
+    if center_info is None:
+        # Get user input from form
+        if not roi_names:
+            MessageBox.Show('There are no non-empty, unapproved ROI geometries on the current exam. Click OK to abort the script.', 'No Non-Empty, Unapproved Geometries')
+            sys.exit()
+        form = CenterGeometriesForm(roi_names)
+        form.ShowDialog()
+        if form.DialogResult != DialogResult.OK:
+            sys.exit()
+        center_info = form.center_info
+    else:
+        center_info = {roi_name: info for roi_name, info in center_info.items() if roi_name in roi_names}  # Remove non-existent ROI names
+        if not center_info:
+            raise ValueError('No unapproved, nonempty geometries in the provided dictionary')
+    
     # Exam center
     img_ctr = exam_ctr(exam)
 

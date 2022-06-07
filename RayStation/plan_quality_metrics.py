@@ -1,63 +1,86 @@
-'''
-This attached script is provided as a tool and not as a RaySearch endorsed script for
-clinical use.  The use of this script in its whole or in part is done so
-without any guarantees of accuracy or expected outcomes. Please verify all results. Further,
-per the Raystation Instructions for Use, ALL scripts MUST be verified by the user prior to
-clinical use.
-
-PaddickAndHomogeneity_01.py
-PaddickAndHomogeneity_02.py fixed line 60-61 to use current case
-PaddickAndHomogeneity_03.py fixed paddickConformity = (tvPivVolume * tvPivVolume)/(vRiVolume * abs_target_vol)
-PaddickAndHomogeneity_04.py CPython, RS 10 compatible
-PaddickAndHomogeneity_05.py RS 11 compatible
-PaddickAndHomogeneity_06.py D0.03cc <= 150%, V100% >= 95%, CI_ring5-6 100% <= 1-2, GI 50% <= 3-5, PCI
-PaddickAndHomogeneity_07.py Beamset doses (per Rx), CG fix (no delete)
-PaddickAndHomogeneity_08.py iterate thru Rx ROIs in plan
-PaddickAndHomogeneity_09.py RTOG Conformity
-PaddickAndHomogeneity_10.py repackaging & radial limit on Paddick exp_size
-
-The statistics will appear in a pop-up window and in the Execution Details
-'''
-'''NOTE: This is a modified versio of PaddickAndHomogeneity_10 from RaySearch support. My changes are as follows:
-- Better conform to Python 3 style guidelines.
-- If no target geoms, say so
-'''
+"""This script builds on PaddickAndHomogeneity_10 from RaySearch support"""
 import clr
+from datetime import datetime
+import os
+import random
+import re
 import sys
+from typing import Optional
 
 from connect import *
+from connect.connect_cpython import PyScriptObject
+
+import pandas as pd
+
+import reportlab.lib.colors
+from reportlab.lib.colors import black, Color, dimgray, lightgrey, white
+from reportlab.lib.pagesizes import letter, landscape
+from reportlab.platypus import SimpleDocTemplate, Paragraph
+from reportlab.platypus.flowables import KeepTogether
+from reportlab.platypus.tables import Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
 
 clr.AddReference('System.Windows.Forms')
 from System.Windows.Forms import MessageBox
 
 
-def rs_version():
-    ui = get_current('ui')
-    _version = ui.GetApplicationVersion().split('.')
-    version = int(_version[0]) if int(_version[1]) < 99 else int(_version[0]) + 1
-    subversion = int(_version[1])
-    return version, subversion
+class PlanQualConstants(object):
+    """Class that defines several useful constants for this remainder of the script"""
+
+    # ----------------- Clinic-specific constants. CHANGE THESE! ----------------- #
+
+    # Absolute path to the directory in which to create the PDF report
+    # This directory does not have to already exist
+    OUTPUT_DIR = os.path.join('T:', os.sep, 'Physics', 'Scripts', 'Output Files', 'Plan Quality Metrics')
+
+    # DataFrame of colors from our enhanced TG-263 spreadsheet
+    # Indexes ("keys") are the TG-263 names
+    TG263_COLORS = pd.read_excel(os.path.join('T:', os.sep, 'Physics', 'KW', 'med-phys-spreadsheets', 'Structure Names & Colors', 'TG-263 Nomenclature with CRMC Colors.xlsm'), sheet_name='Names & Colors', usecols=['TG-263 Primary Name', 'Color'])
+    TG263_COLORS.set_index('TG-263 Primary Name', drop=True, inplace=True)
+    TG263_COLORS['Color'] = TG263_COLORS['Color'].apply(lambda x: x[1:-1])  # Remove parens
+    
+    # --------------------------- No changes necessary --------------------------- #
+
+    STYLES = getSampleStyleSheet()  # Base ReportLab styles (e.g., 'Heading1', 'Normal')
+
+    # Paths to Adobe Reader on RS servers
+    ADOBE_READER_PATHS = [os.path.join('C:', os.sep, 'Program Files (x86)', 'Adobe', 'Reader 11.0', 'Reader', 'AcroRd32.exe'), os.path.join('C:', os.sep, 'Program Files (x86)', 'Adobe', 'Acrobat Reader DC', 'Reader', 'AcroRd32.exe')]
 
 
-def dose_limit(patient, case, exam_name, target_name, idl_roi_name, exp_size=2):
+def create_dlv_roi(patient: PyScriptObject, case: PyScriptObject, exam: PyScriptObject, target_name: str, idl_roi_name: str, exp_sz: Optional[float] = 2) -> PyScriptObject:
     """Creates a dose-limiting-volume (DLV) ROI that is the intersection of the given target expansion and the given isodose line (IDL) ROI
+
+    The DLV ROI is named "z<target name>_DLV<expansion in mm>"
 
     Arguments
     ---------
     patient: The patient to whom the ROIs belong
     case: The case to which the ROIs belong
+    exam: The examination on which to update the derived ROI geometry
+    target_name: The name of the target whose expansion to use in the DLV ROI algebra expression
+    idl_roi_name: The name of the IDL (Dose Region) ROI to use in the DLV ROI algebra expression
+    exp_sz: The uniform target expansion, in cm, to apply to the target in the DLV ROI algebra expression
+            Defaults to 2
+
+    Returns
+    -------
+    The DLV ROI
+
+    Example
+    -------
+    create_dlv_roi(some_patient, some_case, some_exam, 'PTV^MD', 'zIDL_100%') -> ROI named 'zPTV^MD_DLV20'
     """
-    try:
-        dlv_roi_name = case.PatientModel.GetUniqueRoiName(DesiredName=target_name + '_DLV')
-    except:
-        dlv_roi_name = '_' + target_name + '_DLV'
-    dlv_roi = case.PatientModel.CreateRoi(Name=dlv_roi_name, Color='white', Type='DoseRegion')
-    patient.SetRoiVisibility(RoiName=dlv_roi_name, IsVisible=False)
+    # Create unique DLV ROI name
+    exp_sz_mm = str(int(exp_sz * 10)).zfill(2)  # Convert cm to mm for name to mimic TG-263 convention for PRVs
+    dlv_roi = create_roi(patient, case, f'z{target_name}_DLV{exp_sz_mm}', 'DoseRegion')
+    
+    # DLV = intersection of target expansion, and IDL
     dlv_roi.SetAlgebraExpression(ExpressionA={'Operation': 'Union', 'SourceRoiNames': [target_name],
                                               'MarginSettings': {'Type': 'Expand',
-                                                                 'Superior': exp_size, 'Inferior': exp_size,
-                                                                 'Anterior': exp_size, 'Posterior': exp_size,
-                                                                 'Right': exp_size, 'Left': exp_size}},
+                                                                 'Superior': exp_sz, 'Inferior': exp_sz,
+                                                                 'Anterior': exp_sz, 'Posterior': exp_sz,
+                                                                 'Right': exp_sz, 'Left': exp_sz}},
                                  ExpressionB={'Operation': 'Union', 'SourceRoiNames': [idl_roi_name],
                                               'MarginSettings': {'Type': 'Expand',
                                                                  'Superior': 0, 'Inferior': 0,
@@ -68,11 +91,118 @@ def dose_limit(patient, case, exam_name, target_name, idl_roi_name, exp_size=2):
                                                        'Superior': 0, 'Inferior': 0,
                                                        'Anterior': 0, 'Posterior': 0,
                                                        'Right': 0, 'Left': 0})
-    dlv_roi.UpdateDerivedGeometry(Examination=case.Examinations[exam_name], Algorithm='Auto')
-    return dlv_roi_name
+    
+    # Create the geometry on the exam, according to the algebra expression
+    dlv_roi.UpdateDerivedGeometry(Examination=exam, Algorithm='Auto')
+    
+    return dlv_roi
 
 
-def plan_quality_metrics():
+def format_name(name: str) -> str:
+    """Converts the patient's Name attribute into a better format for display
+
+    Arguments
+    ---------
+    pt: The patient whose name to format
+
+    Returns
+    -------
+    The formatted patient name
+
+    Example
+    -------
+    Given some_pt with Name '^Jones^Bill^^M':
+    format_pt_name(some_pt) -> 'Jones, Bill M'
+    """
+    parts = [part for part in re.split(r'\^+', name) if part != '']
+    name = parts[0]
+    if len(parts) > 0:
+        name += ', ' + ' '.join(parts[1:])
+    return name
+
+
+def unique_color(case: PyScriptObject) -> str:
+    """Generates a new (A, R, G, B) color unique among all ROI colors in the case and the TG-263 colors DataFrame
+
+    Argument
+    --------
+    The case whose ROI colors the new color must be unique among
+
+    Raises
+    ------
+    ValueError: If there are 255^4 ROI and TG-263 colors, so that no unique color can be generated
+
+    Returns
+    -------
+    The unique color, as a string 'A, R, G, B', where each component is between 0 and 255, inclusive
+    """
+    # Get the colors used so far
+    used_colors = [f'{roi.Color.A}, {roi.Color.R}, {roi.Color.G}, {roi.Color.B}' for roi in case.PatientModel.RegionsOfInterest]  # Format System.Colors as 'A, R, G, B'
+    used_colors += list(PlanQualConstants.TG263_COLORS['Color'].values)
+    used_colors = list(set(used_colors))  # Remove duplicates
+
+    # Ensure there are other colors in the color space
+    max_num_colors = 255 ** 4
+    if len(used_colors) == max_num_colors:
+        raise ValueError(f'There are only {max_num_colors} unique colors in the color space.')
+
+    # Generate 'A, R, G, B' colors until a color is not in the list of used colors
+    while True:
+        color = f'{random.randint(0, 255)}, {random.randint(0, 255)}, {random.randint(0, 255)}, {random.randint(0, 255)}'
+        if color not in used_colors:
+            return color
+
+
+def create_roi(patient: PyScriptObject, case: PyScriptObject, roi_name: str, roi_type: Optional[str] = 'Undefined') -> PyScriptObject:
+    """Creates an ROI with the given name, made unique, and the given type
+
+    Makes the ROI invisible
+
+    Arguments
+    ---------
+    patient: The patient in which to craete the ROI
+    case: The case in which to create the ROI
+    roi_name: The desired name for the ROI
+    roi_type: The ROI type
+              Defaults to 'Undefined'
+
+    Returns
+    -------
+    The new ROI
+    """
+    unique_roi_name = case.PatientModel.GetUniqueRoiName(DesiredName=roi_name)
+    
+    # Use color from TG-263 spreadsheet if the name is in the spreadsheet
+    # Otherwise, use random unique color
+    try:
+        color = PlanQualConstants.TG263_COLORS[roi_name]
+    except KeyError:
+        color = unique_color(case)
+
+    roi = case.PatientModel.CreateRoi(Name=unique_roi_name, Color=color, Type=roi_type)
+    patient.SetRoiVisibility(RoiName=unique_roi_name, IsVisible=False)
+    return roi
+
+
+def plan_quality_metrics() -> None:
+    """Generates and opens a PDF report of selected plan quality metrics for the current plan
+
+    The following metrics are computed for each beam set in the current plan:
+    - D0.035
+    - Paddick conformity index (CI) (limits the intersection volume in the denominator, to a 2.2 cm expansion of the target)
+    - RTOG (traditional) CI (limits the intersection volume to a 2.2 cm expansion of the target)
+    - CTV homogeneity index (HI)
+    - Gradient index (GI)
+    - % coverage
+    - V12Gy
+    - V4.5Gy
+    - Dmean for Brain
+
+    Dmax, V12, and V4.5 can only be computed if the beam set fractionation is set
+    CIs, HI, GI, and % coverage require an Rx
+    Brain Dmean obviously requires a Brain geometry
+    """
+    # Get current variables
     try:
         patient = get_current('Patient')
     except:
@@ -89,247 +219,184 @@ def plan_quality_metrics():
         MessageBox.Show('There is no plan open. Click OK to abort the script.', 'No Open Plan')
         sys.exit()
 
-    version, subversion = rs_version()
+    # Report name
+    if not os.path.isdir(PlanQualConstants.OUTPUT_DIR):
+        os.makedirs(PlanQualConstants.OUTPUT_DIR)
+    pt_name = format_name(patient.Name)
+    filename = pt_name + ' ' + plan.Name + ' ' + datetime.now().strftime('%Y-%m-%d %H_%M_%S') + '.pdf'
+    filepath = os.path.join(PlanQualConstants.OUTPUT_DIR, re.sub(r'[<>:"/\\\|\?\*]', '_', filename))
 
-    finalMessage = ''
-    target_rois = []
-    temp_rois = []
+    pdf = SimpleDocTemplate(filepath, pagesize=landscape(letter), bottomMargin=0.2 * inch, leftMargin=0.25 * inch, rightMargin=0.2 * inch, topMargin=0.2 * inch)  # 8.5 x 11", 0.2" top and bottom margin, 0.25" left and right margin
+    hdg_2 = Paragraph(pt_name + ': MRN ' + patient.PatientID, style=PlanQualConstants.STYLES['Heading2'])
+    hdg_1 = Paragraph('Plan Quality Metrics for: ' + plan.Name, style=PlanQualConstants.STYLES['Heading1'])
 
-    # get all ROIs
+    metrics_data = [[Paragraph(txt, style=PlanQualConstants.STYLES['Heading3']) for txt in ['Beam set', 'Target', 'D<sub>0.035 cc</sub> [cGy]', 'Paddick CI', 'RTOG CI', 'CTV HI', 'GI', 'Coverage', 'V<sub>12 Gy</sub> [cc]', 'V<sub>4.5 Gy</sub> [cc]', 'Brain D<sub>mean</sub> [cGy]']]]
+    metrics_style = [  # Center-align, middle-align, and black outline for all cells. Gray background for header row
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('BACKGROUND', (0, 0), (-1, 0), dimgray),
+        ('BACKGROUND', (0, 1), (0, -1), lightgrey),
+        ('GRID', (0, 0), (-1, -1), 0.5, black),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE')
+    ]
+
+    # RoIs that are not target specific
+    twelve_gy_roi = create_roi(patient, case, 'zIDL_1200', 'DoseRegion')
+    fourp5_gy_roi = create_roi(patient, case, 'zIDL_450', 'DoseRegion')
+
+    target_names = [roi.Name for roi in case.PatientModel.RegionsOfInterest if roi.OrganData.OrganType == 'Target']
+
+    tbl_row = 1  # Current row in the table (row 0 is the column headers)
+
     for beam_set in plan.BeamSets:
-        target_rois += [roi.OfRoi.Name for roi in beam_set.GetStructureSet().RoiGeometries if roi.HasContours() and roi.OfRoi.OrganData.OrganType == 'Target']
-        all_rois = [roi.OfRoi.Name for roi in beam_set.GetStructureSet().RoiGeometries if roi.HasContours()]
-        target_rois = list(set(target_rois))
-        all_rois = list(set(all_rois))
+        beam_set.FractionDose.UpdateDoseGridStructures()  # Just in case brain geometry needs updating. Otherwise all stats for beain (incl. Dmean, which we use, will be zero)
+        # ROI geometries on beam set exam
+        roi_geoms = beam_set.GetStructureSet().RoiGeometries
+        target_names_beam_set = [target_name for target_name in target_names if roi_geoms[target_name].HasContours()]
 
-        exam_name = beam_set.GetStructureSet().OnExamination.Name
-
-        finalMessage += '===\t' + beam_set.DicomPlanLabel + '\t===\n'
+        # Beam set planning exam
+        exam = beam_set.GetStructureSet().OnExamination
+        exam_name = exam.Name
         
-        if not target_rois:
-            finalMessage += 'No target geometries on exam\n'
-            continue
-        
-        for index, target_name in enumerate(target_rois):
-            finalMessage += ' \t' + beam_set.DicomPlanLabel + ' \t' + target_name + '\n'
-            ##################################################
-            # Paddick Conformity Index  pCl = (TV PIV)^2 / (TV * V RI)
-            ##################################################
-            # TV   target statistics
-            if version <= 10:
-                prescription = beam_set.Prescription.PrimaryDosePrescription # up to 9B, 10A, 10B
-            else:
-                prescription = beam_set.Prescription.PrimaryPrescriptionDoseReference # 11A and forward
+        # Data to add as row in the ReportLab table
+        beam_set_data = [beam_set.DicomPlanLabel]
 
-            abs_target_vol = case.PatientModel.StructureSets[exam_name].RoiGeometries[target_name].GetRoiVolume()
+        rx = beam_set.Prescription.PrimaryPrescriptionDoseReference
+        if rx is not None:
+            rx = rx.DoseValue
+        fractions = beam_set.FractionationPattern
+        if fractions is not None:
+            fractions = fractions.NumberOfFractions
 
-            if prescription is None:
-                finalMessage += 'No Rx, so cannot compute Paddick, etc.\n'
-            else:
-                # target_name = https://protect-us.mimecast.com/s/OIjKCYElMWILm81Rs3W63v?domain=prescription.onstructure.name
-                fractions = beam_set.FractionationPattern.NumberOfFractions
-                # V RI   total volume covered by Rx isodose
-                try:
-                    rxDoseVolName = case.PatientModel.GetUniqueRoiName(DesiredName = 'Rx_Dose_Volume')
-                except:
-                    rxDoseVolName = 'Rx_Dose_Volume_'
+        # Brain Dmean
+        # 'N/A' if no Brain ROI or Brain geometry empty on beam set planning exam
+        try:
+            brain_geom = roi_geoms['Brain']
+        except:  # No Brain ROI
+            brain_d_mean = 'N/A'
+        else:
+            if brain_geom.HasContours():
+                brain_d_mean = beam_set.FractionDose.GetDoseStatistic(RoiName='Brain', DoseType='Average')
+            else:  # Brain geometry is empty on planning exam
+                brain_d_mean = 'N/A'
+        if brain_d_mean != 'N/A':
+            brain_d_mean = f'{brain_d_mean:.3f}'
 
-                rxDose = prescription.DoseValue
-                isodoseRoi = case.PatientModel.CreateRoi(Name = rxDoseVolName, Color = 'Yellow', Type = 'DoseRegion')
-                patient.SetRoiVisibility(RoiName = rxDoseVolName, IsVisible = False)
-                temp_rois.append(rxDoseVolName)
-                # isodoseRoi.CreateRoiGeometryFromDose(DoseDistribution=plan.TreatmentCourse.TotalDose, ThresholdLevel=rxDose)
-                try:
-                    isodoseRoi.CreateRoiGeometryFromDose(DoseDistribution=beam_set.FractionDose, ThresholdLevel=rxDose/fractions)
-                except Exception as e:
-                    print (e)
+        # Can only do Brain Dmean if there is no Rx
+        # All other stats depend on Rx
+        if fractions is None:
+            metrics_style.append(('SPAN', (1, tbl_row), (-2, tbl_row)))
+            metrics_data.append([Paragraph(txt, style=PlanQualConstants.STYLES['Normal']) for txt in [beam_set.DicomPlanLabel, 'No fractionation for beam set'] + [''] * 8 + [brain_d_mean]])
+            
+            tbl_row += 1
+        else:
+            # Total volume (not volume of an ROI) at 12 Gy and 4.5 Gy, respectively
 
-                # limit to around this target
-                dlv_roi = dose_limit(patient, case, exam_name, target_name, rxDoseVolName, exp_size=2.2) # a bit larger than 2.0cm
-                temp_rois.append(dlv_roi)
+            twelve_gy_roi.CreateRoiGeometryFromDose(DoseDistribution=beam_set.FractionDose, ThresholdLevel=1200 / fractions)
+            twelve_gy_roi_vol = roi_geoms[twelve_gy_roi.Name].GetRoiVolume()
+            twelve_gy_roi_vol = f'{twelve_gy_roi_vol:.3f}'
 
-                # vRiVolume = case.PatientModel.StructureSets[exam_name].RoiGeometries[rxDoseVolName].GetRoiVolume() # RX volume
-                vRiVolume = case.PatientModel.StructureSets[exam_name].RoiGeometries[dlv_roi].GetRoiVolume() # RX volume
+            fourp5_gy_roi.CreateRoiGeometryFromDose(DoseDistribution=beam_set.FractionDose, ThresholdLevel=450 / fractions)
+            fourp5_gy_roi_vol = roi_geoms[fourp5_gy_roi.Name].GetRoiVolume()
+            fourp5_gy_roi_vol = f'{fourp5_gy_roi_vol:.3f}'
 
-                # TV PIV  union algebra between TV and V RI
-                try:
-                    overlapRoi = case.PatientModel.GetUniqueRoiName(DesiredName = 'VolumeOverlap')
-                except:
-                    overlapRoi = 'VolumeOverlap'
+            # Can only do Brain Dmean, V12, and V4.5 if no target geometries
+            # All other stats depend on target volume
+            if target_names_beam_set:
+                # The beam set name and non-target-specific stats should span all target rows for this beam set
+                if len(target_names_beam_set) > 1:
+                    metrics_style.extend([('SPAN', (i, tbl_row), (i, tbl_row + len(target_names_beam_set) - 1)) for i in [0, -3, -2, -1]])  # Span rows: beam set, V12, V4.5, and brain Dmean columns
 
-                overlap_roi = case.PatientModel.CreateRoi(Name=overlapRoi, Color='255, 128, 0', Type='Undefined', TissueName=None, RbeCellTypeName=None, RoiMaterial=None)
-                patient.SetRoiVisibility(RoiName = overlapRoi, IsVisible = False)
-                temp_rois.append(overlapRoi)
-                overlap_roi.SetAlgebraExpression(ExpressionA={'Operation': 'Union', 'SourceRoiNames': [rxDoseVolName], 'MarginSettings': { 'Type': 'Expand', 'Superior': 0, 'Inferior': 0, 'Anterior': 0, 'Posterior': 0, 'Right': 0, 'Left': 0 } }, ExpressionB={ 'Operation': 'Union', 'SourceRoiNames': [target_name], 'MarginSettings': { 'Type': 'Expand', 'Superior': 0, 'Inferior': 0, 'Anterior': 0, 'Posterior': 0, 'Right': 0, 'Left': 0 } }, ResultOperation='Intersection', ResultMarginSettings={ 'Type': 'Expand', 'Superior': 0, 'Inferior': 0, 'Anterior': 0, 'Posterior': 0, 'Right': 0, 'Left': 0 })
-                overlap_roi.UpdateDerivedGeometry(Examination=case.Examinations[exam_name], Algorithm='Auto')
-                if case.PatientModel.StructureSets[exam_name].RoiGeometries[overlapRoi].HasContours():
-                    tvPivVolume = case.PatientModel.StructureSets[exam_name].RoiGeometries[overlapRoi].GetRoiVolume()
-                else:
-                    tvPivVolume = 0
+                # Compute target volume-dependent stats for each target geometry on the beam set's exam
+                for i, target_name in enumerate(target_names_beam_set):
+                    abs_target_vol = roi_geoms[target_name].GetRoiVolume()  # Total target volume
 
-                # calc
-                paddickConformity = (tvPivVolume * tvPivVolume)/(vRiVolume * abs_target_vol)
-                messagePaddick = str('The Paddick Conformity Index for {} is : {}'.format(target_name, round(paddickConformity,3)))
-                print (messagePaddick)
-                finalMessage += messagePaddick + '\n'
+                    # Dmax
+                    d_max = beam_set.FractionDose.GetDoseAtRelativeVolumes(RoiName=target_name, RelativeVolumes=[0.035 / abs_target_vol])[0]
+                    d_max *= fractions
+                    d_max = f'{d_max:.2f}'
 
-                # cleanup/delete ROis
-                # case.PatientModel.RegionsOfInterest[overlapRoi].DeleteRoi()
-
-                ##################################################
-                # RTOG Conformity Index  rCl = (prescription isodose volume) / (target volume)
-                ##################################################
-                rtogConformity = vRiVolume / abs_target_vol
-                messagertogConformity = str('The RTOG Conformity Index for {} is : {}'.format(target_name, round(rtogConformity,3)))
-                print (messagertogConformity)
-                finalMessage += messagertogConformity + '\n'
-
-                ##################################################
-                # CTV homogeneity (conformity) index (D5 - D95)/Drx
-                ##################################################
-                # D5
-                # fivePercentDoseVolume = plan.TreatmentCourse.TotalDose.GetDoseAtRelativeVolumes(RoiName = target_name, RelativeVolumes = [0.05])
-                fivePercentDoseVolume = beam_set.FractionDose.GetDoseAtRelativeVolumes(RoiName = target_name, RelativeVolumes = [0.05])
-                # D95
-                # nintyfivePercentDoseVolume = plan.TreatmentCourse.TotalDose.GetDoseAtRelativeVolumes(RoiName = target_name, RelativeVolumes = [0.95])
-                nintyfivePercentDoseVolume = beam_set.FractionDose.GetDoseAtRelativeVolumes(RoiName = target_name, RelativeVolumes = [0.95])
-
-                # calc
-                ctvConformityIndex = (fivePercentDoseVolume[0] - nintyfivePercentDoseVolume[0]) / rxDose
-                ctvMessageConformity = str('The Homogeneity (Conformity) Index for {} is : {}'.format(target_name, round(ctvConformityIndex,3)))
-                print (ctvMessageConformity)
-                finalMessage += ctvMessageConformity + '\n'
-
-                # cleanup/delete ROis
-                # case.PatientModel.RegionsOfInterest[rxDoseVolName].DeleteRoi()
-
-                ##################################################
-                # Gradient index GI = PIVhalf / PIV
-                # where PIVhalf is the rx isodose volume, at half the rx isodose and PIV is the rx isodose volume
-                ##################################################
-                try:
-                    rx50DoseVolName = case.PatientModel.GetUniqueRoiName(DesiredName = 'Rx_50Dose_Volume')
-                except:
-                    rx50DoseVolName = 'Rx_50Dose_Volume'
-                fiftyPercentIsodoseRoi = case.PatientModel.CreateRoi(Name = rx50DoseVolName, Color = 'Yellow', Type = 'DoseRegion')
-                # fiftyPercentIsodoseRoi.CreateRoiGeometryFromDose(DoseDistribution=plan.TreatmentCourse.TotalDose, ThresholdLevel=rxDose*(0.50))
-                patient.SetRoiVisibility(RoiName = rx50DoseVolName, IsVisible = False)
-                temp_rois.append(rx50DoseVolName)
-                fiftyPercentIsodoseRoi.CreateRoiGeometryFromDose(DoseDistribution=beam_set.FractionDose, ThresholdLevel=rxDose*(0.50)/fractions)
-                fiftyPercentIsodoseVolume = case.PatientModel.StructureSets[exam_name].RoiGeometries[rx50DoseVolName].GetRoiVolume()
-
-                try:
-                    rx100DoseVolName = case.PatientModel.GetUniqueRoiName(DesiredName = 'Rx_100Dose_Volume')
-                except:
-                    rx100DoseVolName = 'Rx_100Dose_Volume'
-
-                isodoseRoi = case.PatientModel.CreateRoi(Name = rx100DoseVolName, Color = 'Yellow', Type = 'DoseRegion')
-                # isodoseRoi.CreateRoiGeometryFromDose(DoseDistribution=plan.TreatmentCourse.TotalDose, ThresholdLevel=rxDose)
-                patient.SetRoiVisibility(RoiName = rx100DoseVolName, IsVisible = False)
-                temp_rois.append(rx100DoseVolName)
-                isodoseRoi.CreateRoiGeometryFromDose(DoseDistribution=beam_set.FractionDose, ThresholdLevel=rxDose/fractions)
-                rxVolume = case.PatientModel.StructureSets[exam_name].RoiGeometries[rx100DoseVolName].GetRoiVolume()
-
-                gradientIndex = fiftyPercentIsodoseVolume/rxVolume
-                gradientIndexMsg = str('The Gradient Index for {} is : {}'.format(target_name, round(gradientIndex,3)))
-                print (gradientIndexMsg)
-                finalMessage += gradientIndexMsg + '\n'
-
-                # cleanup/delete ROis
-                # case.PatientModel.RegionsOfInterest[rx50DoseVolName].DeleteRoi()
-                # case.PatientModel.RegionsOfInterest[rx100DoseVolName].DeleteRoi()
-
-                ##################################################
-                # dose at 0.03 cc
-                ##################################################
-                maxPixelDose = beam_set.FractionDose.GetDoseAtRelativeVolumes(RoiName = target_name, RelativeVolumes = [0.03/abs_target_vol])[0]
-                dMaxMessage = str('The Dose to 0.03cc in {} is : {} cGy'.format(target_name,round(fractions * maxPixelDose, 2)))
-                print(dMaxMessage)
-                finalMessage += dMaxMessage + '\n'
-
-                ##################################################
-                # volume at Rx dose (percent coverage)
-                ##################################################
-                coveragePercentage = beam_set.FractionDose.GetRelativeVolumeAtDoseValues(RoiName = target_name, DoseValues = [rxDose/fractions])[0]
-                # print(coveragePercentage)
-                coverageMessage = str('{}% coverage on {} at {} cGy'.format(round(coveragePercentage * 100, 2), target_name, rxDose))
-                print(coverageMessage)
-                finalMessage += coverageMessage + '\n'
-
-                ##################################################
-                # V12 (Vol recieving 12Gy)
-                ##################################################
-                if index == 0: # this is the first ROI so we need these general statistics
-                    try:
-                        twelve_gray = case.PatientModel.GetUniqueRoiName(DesiredName = '12Gy_Dose_Volume')
-                    except:
-                        twelve_gray = '12Gy_Dose_Volume'
-
-                    twelve_gray_roi = case.PatientModel.CreateRoi(Name = twelve_gray, Color = 'Yellow', Type = 'DoseRegion')
-                    # isodoseRoi.CreateRoiGeometryFromDose(DoseDistribution=plan.TreatmentCourse.TotalDose, ThresholdLevel=rxDose)
-                    patient.SetRoiVisibility(RoiName = twelve_gray, IsVisible = False)
-                    temp_rois.append(twelve_gray)
-                    twelve_gray_roi.CreateRoiGeometryFromDose(DoseDistribution=beam_set.FractionDose, ThresholdLevel=1200.0/fractions)
-                    twelve_gray_vol = case.PatientModel.StructureSets[exam_name].RoiGeometries[twelve_gray].GetRoiVolume()
-                    twelveGrayMessage = str('Volume recieving 12Gy is {} cc'.format(round(twelve_gray_vol, 3)))
-                print(twelveGrayMessage)
-                finalMessage += twelveGrayMessage + '\n'
-
-
-                ##################################################
-                # V4.5
-                ##################################################
-                if index == 0: # this is the first ROI so we need these general statistics
-                    try:
-                        four_ana_half_gray = case.PatientModel.GetUniqueRoiName(DesiredName = '450cGy_Dose_Volume')
-                    except:
-                        four_ana_half_gray = '450cGy_Dose_Volume'
-
-                    twelve_gray_roi = case.PatientModel.CreateRoi(Name = four_ana_half_gray, Color = 'Yellow', Type = 'DoseRegion')
-                    # isodoseRoi.CreateRoiGeometryFromDose(DoseDistribution=plan.TreatmentCourse.TotalDose, ThresholdLevel=rxDose)
-                    patient.SetRoiVisibility(RoiName = four_ana_half_gray, IsVisible = False)
-                    temp_rois.append(four_ana_half_gray)
-                    twelve_gray_roi.CreateRoiGeometryFromDose(DoseDistribution=beam_set.FractionDose, ThresholdLevel=450/fractions)
-                    four_ana_half_gray_vol = case.PatientModel.StructureSets[exam_name].RoiGeometries[four_ana_half_gray].GetRoiVolume()
-                    fourPointFiveGrayMessage = str('Volume recieving 4.5Gy is {} cc'.format(round(four_ana_half_gray_vol, 3)))
-                print(fourPointFiveGrayMessage)
-                finalMessage += fourPointFiveGrayMessage + '\n'
-
-                ##################################################
-                # Mean Brain Dose
-                ##################################################
-                if index == 0: # this is the first ROI so we need these general statistics
-                    brain_name = 'Brain'
-                    if brain_name in all_rois:
-                        mean_brain_dose = beam_set.FractionDose.GetDoseStatistic(RoiName = brain_name, DoseType = 'Average')
-                        meanBrainDoseMessage = str(
-                            'The mean brain dose is {} cGy'.format(round(mean_brain_dose, 3)))
-                        print(meanBrainDoseMessage)
-                        finalMessage += meanBrainDoseMessage + '\n'
+                    if rx is None:
+                        metrics_style.append(('SPAN', (3, tbl_row), (-4, tbl_row)))
+                        metrics_data.append([Paragraph(txt, style=PlanQualConstants.STYLES['Normal']) for txt in [beam_set.DicomPlanLabel, target_name, d_max, 'No Rx for beam set'] + [''] * 4 + [twelve_gy_roi_vol, fourp5_gy_roi_vol, brain_d_mean]])
                     else:
-                        print('No Brain ROI found')
+                        # Set geometries and get necessary volumes and other stats
+                        idl_100_pct_roi = create_roi(patient, case, 'zIDL_100%', 'DoseRegion')
+                        idl_100_pct_roi.CreateRoiGeometryFromDose(DoseDistribution=beam_set.FractionDose, ThresholdLevel=rx / fractions)
+                        idl_100_pct_roi_vol = roi_geoms[idl_100_pct_roi.Name].GetRoiVolume()
 
+                        idl_50_pct_roi = create_roi(patient, case, 'zIDL_50%', 'DoseRegion')
+                        idl_50_pct_roi.CreateRoiGeometryFromDose(DoseDistribution=beam_set.FractionDose, ThresholdLevel=rx * 0.5 / fractions)
+                        idl_50_pct_roi_vol = roi_geoms[idl_50_pct_roi.Name].GetRoiVolume()
 
-            ##################################################
-            # EOF
-            ##################################################
-            print('\n')
+                        dlv_roi = create_dlv_roi(patient, case, exam, target_name, idl_100_pct_roi.Name, 2.2)  # A bit larger than 2 cm
+                        dlv_roi_vol = roi_geoms[dlv_roi.Name].GetRoiVolume()
 
-    ##################################################
-    # cleanup
-    ##################################################
-    for r in temp_rois:
-        case.PatientModel.RegionsOfInterest[r].DeleteRoi()
+                        idl_100_pct_and_target_roi = create_roi(patient, case, f'z{idl_100_pct_roi.Name}&{target_name}')
+                        idl_100_pct_and_target_roi.SetAlgebraExpression(ExpressionA={'Operation': 'Union', 'SourceRoiNames': [idl_100_pct_roi.Name], 'MarginSettings': { 'Type': 'Expand', 'Superior': 0, 'Inferior': 0, 'Anterior': 0, 'Posterior': 0, 'Right': 0, 'Left': 0 } }, ExpressionB={ 'Operation': 'Union', 'SourceRoiNames': [target_name], 'MarginSettings': { 'Type': 'Expand', 'Superior': 0, 'Inferior': 0, 'Anterior': 0, 'Posterior': 0, 'Right': 0, 'Left': 0 } }, ResultOperation='Intersection', ResultMarginSettings={ 'Type': 'Expand', 'Superior': 0, 'Inferior': 0, 'Anterior': 0, 'Posterior': 0, 'Right': 0, 'Left': 0 })
+                        idl_100_pct_and_target_roi.UpdateDerivedGeometry(Examination=exam, Algorithm='Auto')
+                        
+                        idl_100_pct_and_target_geom = roi_geoms[idl_100_pct_and_target_roi.Name]
+                        if idl_100_pct_and_target_geom.HasContours():
+                            idl_100_pct_and_target_roi_vol = idl_100_pct_and_target_geom.GetRoiVolume()
+                        else:
+                            idl_100_pct_and_target_roi_vol = 0
 
-    ##################################################
-    # print
-    ##################################################
-    print (finalMessage)
-    '''try:
-        import wpf
-        from https://protect-us.mimecast.com/s/e1OWCZ6mWYI5AG4ZsNZn-_?domain=system.windows import MessageBox
-        MessageBox.Show(finalMessage)
-    except:
-        import ctypes  # An included library with Python install.
-        ctypes.windll.user32.MessageBoxW(0, finalMessage, 'Conformity Indexes', 0)'''
-    MessageBox.Show(finalMessage, 'Conformity Indices')
+                        # Paddick CI
+                        paddick_ci = (idl_100_pct_and_target_roi_vol * idl_100_pct_and_target_roi_vol) / (dlv_roi_vol * abs_target_vol)
+                        paddick_ci = f'{paddick_ci:.3f}'
+
+                        # RTOG CI
+                        rtog_ci = dlv_roi_vol / abs_target_vol
+                        rtog_ci = f'{rtog_ci:.3f}'
+
+                        # CTV HI
+                        d_5_pct_vol, d_95_pct_vol = beam_set.FractionDose.GetDoseAtRelativeVolumes(RoiName=target_name, RelativeVolumes=[0.05, 0.95])
+                        ctv_hi = (d_5_pct_vol - d_95_pct_vol) / rx
+                        ctv_hi = f'{ctv_hi:.3f}'
+
+                        # GI
+                        gi = idl_50_pct_roi_vol / idl_100_pct_roi_vol
+                        gi = f'{gi:.3f}'
+
+                        # Coverage
+                        coverage = beam_set.FractionDose.GetRelativeVolumeAtDoseValues(RoiName=target_name, DoseValues=[rx / fractions])[0]
+                        coverage *= 100
+                        coverage = f'{coverage:.2f}% at {rx:.0f} cGy'
+
+                        # Delete unnecessary target volume-dependent ROIs
+                        for roi in [idl_100_pct_roi, idl_50_pct_roi, dlv_roi, idl_100_pct_and_target_roi]:
+                            roi.DeleteRoi()
+
+                        # Add stats to table row data for this beam set
+                        beam_set_data = [beam_set.DicomPlanLabel if i == 0 else '', target_name, paddick_ci, rtog_ci, ctv_hi, gi, d_max, coverage]
+                        if i == 0:
+                            beam_set_data.extend([twelve_gy_roi_vol, fourp5_gy_roi_vol, brain_d_mean]) 
+                        else:
+                            beam_set_data.extend([''] * 3)
+                        metrics_data.append([Paragraph(txt, style=PlanQualConstants.STYLES['Normal']) for txt in beam_set_data])
+
+                    tbl_row += 1
+
+            else:  # No target geometries on beam set exam
+                # Display 'No target geometries' message across all target volume-dependent columns in the beam set's row
+                metrics_style.append(('SPAN', (1, tbl_row), (-4, tbl_row)))
+                msg = 'No target geometries on exam' if target_names else 'No target ROIs in case'
+                metrics_data.append([Paragraph(txt, style=PlanQualConstants.STYLES['Normal']) for txt in [beam_set.DicomPlanLabel, msg] + [''] * 6 + [twelve_gy_roi_vol, fourp5_gy_roi_vol, brain_d_mean]])
+                
+                tbl_row += 1
+
+    # Delete unnecessary Rx-dependent ROIs
+    for roi in [twelve_gy_roi, fourp5_gy_roi]:
+        roi.DeleteRoi()
+
+    tbl = Table(metrics_data, style=TableStyle(metrics_style))
+    elems = [KeepTogether([hdg_2, hdg_1]), tbl]
+    pdf.build(elems)
+
+    # Open report
+    for reader_path in PlanQualConstants.ADOBE_READER_PATHS:
+        try:
+            os.system(f'START /B "{reader_path}" "{filepath}"')
+            break
+        except:
+            continue

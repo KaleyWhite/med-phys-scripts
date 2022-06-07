@@ -20,7 +20,7 @@ COLORWASH_TEMPLATE = 'CRMC Standard Dose Colorwash'
 EXPORT_PATH = os.path.join('T:', os.sep, 'Physics', 'QA & Procedures', 'Delta4', 'DQA Plans')
 
 # List of machine names to export DQA plans for
-MACHINES = ['E1', 'E2', 'ELEKTA']
+MACHINES = ['E2', 'ELEKTA']
 
 
 def unique_qa_plan_name(plan: PyScriptObject) -> str:

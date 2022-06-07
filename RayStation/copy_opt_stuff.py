@@ -1,5 +1,6 @@
 import clr
 from collections import OrderedDict
+import os
 import sys
 from typing import Any, Dict, Tuple
 
@@ -13,7 +14,7 @@ from System import EventArgs  # For type hints
 from System.Drawing import *
 from System.Windows.Forms import *
 
-sys.path.append(r'T:\Physics\KW\med-phys-scripts\RayStation')
+sys.path.append(os.path.join('T:', os.sep, 'Physics', 'KW', 'med-phys-scripts' 'RayStation'))
 from copy_plan_without_changes import copy_plan_without_changes
 
 

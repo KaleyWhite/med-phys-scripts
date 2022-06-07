@@ -15,7 +15,7 @@ from System.Windows.Forms import MessageBox
 
 # Directory to save the TXT file in
 # This directory does not have to exist
-OUTPUT_DIR = os.path.join('T:', os.sep, 'Physics', 'Scripts', 'Generate Shifts Comments')
+OUTPUT_DIR = os.path.join('T:', os.sep, 'Physics', 'Scripts', 'Output Files', 'Generate Shifts Comments')
 
 
 def fmt_num(num: float, nearest_x: float) -> str:
@@ -37,7 +37,6 @@ def fmt_num(num: float, nearest_x: float) -> str:
     -------
     fmt_num(1.61, 0.5) -> '1.5'
     """
-
     num = round(num / nearest_x) * nearest_x
     # Don't count the "0." at the beginning
     num_places = len(str(nearest_x)) - 2
@@ -48,9 +47,12 @@ def fmt_num(num: float, nearest_x: float) -> str:
 
 
 def setup_beam_ssd(setup_beam: PyScriptObject, regex: str) -> Optional[float]:
-    """Gets the SSD of the setup beam if its name or description contains the given regular expression
+    """Gets the SSD of the setup beam if any of the following are true:
+    - Its name or description contains the given regular expression (case insensitive)
+    - The regular expression is "AP" (case insensitive) and the beam's gantry angle is zero
+    - The regular expression is "PA" (case insensitive) and the beam's gantry angle is 180
 
-    The matched substring must not be surrounded by alphabetric characters
+    The matched substring must not be surrounded by alphabetic characters
 
     Arguments
     ---------
@@ -59,15 +61,13 @@ def setup_beam_ssd(setup_beam: PyScriptObject, regex: str) -> Optional[float]:
 
     Returns
     -------
-    The setup beam's SSD, if the regular expression is found, or None otherwise or if the SSD is infinite
+    The setup beam's SSD, if the setup beam matches, or None otherwise or if the SSD is infinite
     """
-    regex = r'(^|[^a-zA-Z])' + regex + r'($|[^a-zA-Z])'  # Matching substring must not be immediately preceded or followed by an alphabetic character
-    if re.search(regex, setup_beam.Name, re.IGNORECASE) is None and re.search(regex, setup_beam.Description, re.IGNORECASE) is None:  # No substring match in either the Name or the Description
-        return
-    setup_beam_ssd = setup_beam.GetSSD()
-    if abs(setup_beam_ssd) == float('inf'):  # Infinite SSD
-        return
-    return setup_beam_ssd
+    full_regex = r'(^|[^a-zA-Z])' + regex + r'($|[^a-zA-Z])'  # Matching substring must not be immediately preceded or followed by an alphabetic character
+    if (re.search(full_regex, setup_beam.Name, re.IGNORECASE) is not None or re.search(full_regex, setup_beam.Description, re.IGNORECASE) is not None) or (regex == 'AP' and setup_beam.GantryAngle == 0) or (regex == 'PA' and setup_beam.GantryAngle == 180):
+        setup_beam_ssd = setup_beam.GetSSD()
+        if abs(setup_beam_ssd) != float('inf'):  # Infinite SSD
+             return setup_beam_ssd
 
 
 def cb_setup_beams(beam_set: PyScriptObject, pos: str) -> Tuple[Dict[PyScriptObject, float], Dict[PyScriptObject, float]]:

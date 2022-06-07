@@ -328,7 +328,7 @@ class ListPatientsForm(Form):
 
     # ------------------------------ Basic controls ------------------------------ #
 
-    def _add_checkbox(self, **kwargs) -> Checkbox:
+    def _add_checkbox(self, **kwargs) -> CheckBox:
         """Adds a checkbox to a control
 
         Keyword Arguments
@@ -597,7 +597,7 @@ def list_patients():
                         names_to_chk.extend([case.BodySite, case.CaseName, case.Comments, case.Diagnosis])  # We will check certain case attributes for the keywords
                         names_to_chk.append(exam.Name)  # We will check the exam name for the keywords
                         for plan in case.TreatmentPlans:  # Check each plan
-                            if plan.GetTotalDoseStructureSet().OnExamination.Name.lower() == exam.Name.lower():  # The plan must be on the current exam
+                            if plan.GetTotalDoseStructureSet().OnExamination.Equals(exam):  # The plan must be on the current exam
                                 names_to_chk.extend([plan.Name, plan.Comments])  # We will check certain plan attributes for the keywords
                                 for bs in plan.BeamSets:  # Check each beam set
                                     if not tx_techniques or get_tx_technique(bs) in tx_techniques:  # Check this beam set if either (a) the treatment technique filter is not applied, or (b) the beam set's treatment technique matches the filter
@@ -614,13 +614,15 @@ def list_patients():
                                                     names_to_chk.append(rx.OnStructure.Name)
            
             # Check each name for each keyword (case insensitive)
-            names_to_chk = set(name.lower() for name in names_to_chk if name is not None)  # Remove duplicates and None from names list. Standardize keywords to lowercase.
+            names_to_chk = set(name.lower() for name in names_to_chk if name is not None and name != '')  # Remove duplicates and None from names list. Standardize keywords to lowercase.
+            print(names_to_chk)
             keyword_match = False  # Assume no match
             for keyword in keywords:
-                for name in names:
+                for name in names_to_chk:
                     if keyword in name and (not keyword.startswith('pelvi') or 'abd' not in name):  # Very special case: if searching for "pelvis", we don't want, e.g, "abdomen/pelvis"
                         keyword_match = True
                         break
+            print(keyword_match)
             if not keyword_match:  # If no keywords present in any of the names, move on to next patient
                 continue
         

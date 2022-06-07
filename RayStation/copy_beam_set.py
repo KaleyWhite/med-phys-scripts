@@ -14,6 +14,89 @@ from copy_opt_stuff import copy_objectives_and_constraints, copy_opt_params
 from copy_plan_without_changes import copy_plan_without_changes
 
 
+def copy_rxs(old_beam_set: PyScriptObject, new_beam_set: PyScriptObject) -> None:
+    """Copies prescriptions from one beam set to another
+
+    Arguments
+    ---------
+    old_beam_set: The beam set to copy prescriptions from
+    new_beam_Set: The unapproved beam set to copy prescriptions to
+
+    Raises
+    ------
+    ValueError: If the new beam set is approved
+    """
+    if new_beam_set.Review is not None and new_beam_set.Review.ApprovalStatus == 'Approved':
+        raise ValueError('Cannot copy Rx\'s to an approved beam set')
+    if old_beam_set.Prescription is None:
+        return
+    with CompositeAction('Copy Prescriptions'):
+        for old_rx in old_beam_set.Prescription.PrescriptionDoseReferences:  # Copy all Rx's, not just the primary Rx
+            if hasattr(old_rx, 'OnStructure'):
+                if old_rx.PrescriptionType == 'DoseAtPoint':  # Rx to POI
+                    new_beam_set.AddPoiPrescriptionDoseReference(PoiName=old_rx.OnStructure.Name, DoseValue=old_rx.DoseValue, RelativePrescriptionLevel=old_rx.RelativePrescriptionLevel)
+                else:  # Rx to ROI
+                    new_beam_set.AddRoiPrescriptionDoseReference(RoiName=old_rx.OnStructure.Name, DoseVolume=old_rx.DoseVolume, PrescriptionType=old_rx.PrescriptionType, DoseValue=old_rx.DoseValue, RelativePrescriptionLevel=old_rx.RelativePrescriptionLevel)
+            elif old_rx.OnDoseSpecificationPoint is None:  # Rx to DSP
+                new_beam_set.AddSitePrescriptionDoseReference(Description=old_rx.Description, DoseValue=old_rx.DoseValue, RelativePrescriptionLevel=old_rx.RelativePrescriptionLevel)
+            else:  # Rx to site that is not a DSP
+                new_beam_set.AddSitePrescriptionDoseReference(Description=old_rx.Description, NameOfDoseSpecificationPoint=old_rx.OnDoseSpecificationPoint.Name, DoseValue=old_rx.DoseValue, RelativePrescriptionLevel=old_rx.RelativePrescriptionLevel)
+
+
+def copy_setup_beams(old_beam_set: PyScriptObject, new_beam_set: PyScriptObject, beam_num: Optional[int] = None, existing_beam_names: Optional[List[str]] = []) -> Optional[int]:
+    """Copies setup beams from one beam set to another
+
+    If old beam set is not set to use setup beams, does nothing
+
+    Clears any existing setup beams in the new beam set
+
+    Arguments
+    ---------
+    old_beam_set: The beam set to copy setup beams from
+    new_beam_set: The unapproved beam set to copy setup beam to
+    beam_num: The beam number to start numbering the new setup beams with
+              Necessary is new beam names should be unique (e.g., in the current case). Otherwise, new setup beams have same numbers as old
+              Defaults to None (new setup beam numbers need not be unique)
+    existing_beam_names: List of beam names that the new setup beam names must be unique among
+                         Necessary is new setup beam names must be unique (e.g., in the current case). Otherwise, new setup beam names are same as old
+                         If provided, is modified in-place with the new setup beam names
+                         Defaults to the empty list (setup beam names need not be unique)
+
+    Raises
+    ------
+    ValueError: If the new beam set is approved
+
+    Returns
+    -------
+    A unique beam number. The beam number after all setup beams have been consecutively renumbered
+    If beam_num is None, returns None
+    """
+    if new_beam_set.Review is not None and new_beam_set.Review.ApprovalStatus == 'Approved':
+        raise ValueError('Cannot copy setup beams to an approved beam set')
+    use_setup_beams = old_beam_set.PatientSetup.UseSetupBeams
+    new_beam_set.PatientSetup.UseSetupBeams = use_setup_beams
+    if not use_setup_beams or old_beam_set.PatientSetup.SetupBeams.Count == 0:
+        return
+    old_setup_beams = old_beam_set.PatientSetup.SetupBeams
+    new_beam_set.UpdateSetupBeams(ResetSetupBeams=True, SetupBeamsGantryAngles=[setup_beam.GantryAngle for setup_beam in old_setup_beams])
+    for i, old_setup_beam in enumerate(old_setup_beams):
+        new_setup_beam = new_beam_set.PatientSetup.SetupBeams[i]
+        new_setup_beam.Description = old_setup_beam.Description
+        # New setup beam's number
+        if beam_num is None:
+            new_setup_beam.Number = old_setup_beam.Number
+        else:
+            new_setup_beam.Number = beam_num
+            beam_num += 1
+        # New setup beam's name
+        if existing_beam_names:  # Same name as old but made unique
+            new_setup_beam.Name = unique_name(old_setup_beam.Name, existing_beam_names)
+            existing_beam_names.append(new_setup_beam.Name)
+        else:  # Same name as old
+            new_setup_beam.Name = old_setup_beam.Name
+    return beam_num
+
+
 def is_sabr(beam_set: PyScriptObject) -> bool:
     """Returns whether or not a VMAT beam set is SABR.
 
@@ -269,16 +352,7 @@ def copy_beam_set() -> None:
             # Does not work with uncommissioned machine
             #old_beam_set.ComputeDoseOnAdditionalSets(ExaminationNames=[planning_exam.Name], FractionNumbers=[0])
 
-    # Manually copy setup beams from old beam set
-    if old_beam_set.PatientSetup.UseSetupBeams and old_beam_set.PatientSetup.SetupBeams.Count > 0:
-        old_setup_beams = old_beam_set.PatientSetup.SetupBeams
-        new_beam_set.UpdateSetupBeams(ResetSetupBeams=True, SetupBeamsGantryAngles=[setup_beam.GantryAngle for setup_beam in old_setup_beams])  # Clear the setup beams created when the beam set was added, to ensure no extraneous setup beams in new beam set
-        for i, old_setup_beam in enumerate(old_setup_beams):
-            new_setup_beam = new_beam_set.PatientSetup.SetupBeams[i]
-            new_setup_beam.Number = beam_num
-            new_setup_beam.Name = unique_name(old_setup_beam.Name, existing_beam_names)
-            new_setup_beam.Description = old_setup_beam.Description
-            beam_num += 1
+    copy_setup_beams(old_beam_set, new_beam_set, beam_num, existing_beam_names)
     
     # Copy objectives and constraints, and optimization parameters
     old_plan_opt = next(opt for opt in plan.PlanOptimizations if opt.OptimizedBeamSets.Count == 1 and opt.OptimizedBeamSets[0].Equals(old_beam_set))
@@ -287,15 +361,4 @@ def copy_beam_set() -> None:
     copy_opt_params(old_plan_opt, new_plan_opt)
 
     # Copy Rx's
-    if old_beam_set.Prescription is not None:
-        with CompositeAction('Copy Prescriptions'):
-            for old_rx in old_beam_set.Prescription.PrescriptionDoseReferences:  # Copy all Rx's, not just the primary Rx
-                if hasattr(old_rx, 'OnStructure'):
-                    if old_rx.PrescriptionType == 'DoseAtPoint':  # Rx to POI
-                        new_beam_set.AddPoiPrescriptionDoseReference(PoiName=old_rx.OnStructure.Name, DoseValue=old_rx.DoseValue, RelativePrescriptionLevel=old_rx.RelativePrescriptionLevel)
-                    else:  # Rx to ROI
-                        new_beam_set.AddRoiPrescriptionDoseReference(RoiName=old_rx.OnStructure.Name, DoseVolume=old_rx.DoseVolume, PrescriptionType=old_rx.PrescriptionType, DoseValue=old_rx.DoseValue, RelativePrescriptionLevel=old_rx.RelativePrescriptionLevel)
-                elif old_rx.OnDoseSpecificationPoint is None:  # Rx to DSP
-                    new_beam_set.AddSitePrescriptionDoseReference(Description=old_rx.Description, DoseValue=old_rx.DoseValue, RelativePrescriptionLevel=old_rx.RelativePrescriptionLevel)
-                else:  # Rx to site that is not a DSP
-                    new_beam_set.AddSitePrescriptionDoseReference(Description=old_rx.Description, NameOfDoseSpecificationPoint=old_rx.OnDoseSpecificationPoint.Name, DoseValue=old_rx.DoseValue, RelativePrescriptionLevel=old_rx.RelativePrescriptionLevel)
+    copy_rxs(old_beam_set, new_beam_set)
