@@ -322,6 +322,8 @@ def will_gantry_collide(cyl: PyScriptObject, struct_set: PyScriptObject, r: floa
 def plan_check() -> None:
     """Performs an "Initial Physics Review" plan check on the current plan
 
+    SAVES PATIENT!
+
     Writes and opens a PDF report named "<patient name> <YYYY-MM-DD HH_MM_SS>.pdf" to the specified output directory
     Report is divided into several sections:
     - Errors (red): Things that really should be fixed
