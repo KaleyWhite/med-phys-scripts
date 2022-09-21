@@ -144,6 +144,8 @@ class AddClinicalGoalsForm(Form):
 def add_clinical_goals(gui=True, template_names=None):
     """Applies clinical goals template(s) from spreadsheet, to the current plan
 
+    SAVES PATIENT!
+
     Arguments
     ---------
     gui: True if the user should choose templates from a GUI, False to use the `templates` argument instead
